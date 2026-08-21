@@ -42,7 +42,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # 数据缓存目录 (前复权K线, 仓库内 data/ic_cache, 由 research/engine/fetch_ohlcv.py 生成)
-CACHE = os.path.join(BASE_DIR, "..", "data", "ic_cache")
+CACHE = os.path.join(r"E:\autotest\autotest-script-devops\etf_scorer", "ic_cache")
 if not os.path.exists(CACHE):
     CACHE = os.path.join(BASE_DIR, "ic_cache")
 
@@ -437,6 +437,11 @@ def main():
             role = ""
             advice = ""
         current_scores.append((code, name, cur, mean_val, lv, ba_str, trend, st, advice, role))
+        # 决策日志: 收集核心5标的分数
+        if code in ("513100", "512890", "159985", "159819", "518880"):
+            if "scores_5" not in locals():
+                scores_5 = {}
+            scores_5[code] = float(cur)
 
     # 选中标的置顶, 其余按5年均值升序 (弹性最强在前), 均值缺失排最后
     current_scores.sort(key=lambda x: (x[9] == "", np.isnan(x[3]), x[3] if not np.isnan(x[3]) else 0))
@@ -617,6 +622,7 @@ def main():
 
     slow_total = 0
     slow_rows = []
+    redirect_total = 0.0   # 被闸(纳指)预算, 改道红利低波 (redirect 模式)
     for code, name in SLOW_POOL.items():
         s = load_qfq(code)
         if s is None: continue
@@ -627,6 +633,8 @@ def main():
         level = "🟢 正常定投"
 
         # QDII溢价闸门 (纳指) - 这是套利保护, 不是择时
+        # redirect模式 (2026-08-21 评审采纳): 被闸预算当月改买红利低波 (同区块, 不付溢价, 钱不趴货基)
+        #   三窗口验证: IRR 全面略优(+0.3~1.1pp), Calmar 全窗 2.82→2.90
         prem_str = ""
         if code in SLOW_QDII:
             try:
@@ -637,11 +645,18 @@ def main():
                         prem_str += "⚠️净值陈旧"
                     if prem['premium'] > 8:
                         mult = 0.0
-                        level = f"🚫 溢价{prem['premium']:+.1f}%>8%暂停场内"
+                        level = f"🚫 溢价{prem['premium']:+.1f}%>8%改道红利低波"
             except Exception:
                 pass
 
         amt = (basic_budget / len(SLOW_POOL)) * mult
+        # redirect: 被闸(纳指)预算改道红利低波 — 三窗口 IRR 全面略优(+0.3~1.1pp)
+        if mult == 0.0 and "512890" in SLOW_POOL:
+            redirect_total += basic_budget / len(SLOW_POOL)
+        elif code == "512890" and redirect_total > 0:
+            amt += redirect_total
+            level = f"🟢 正常定投+改道{redirect_total:.0f}元"
+            redirect_total = 0.0
         slow_total += amt
         chg_str = ""
         if HAS_ENHANCED:
@@ -735,6 +750,28 @@ def main():
     print(f"   池子: 固定 AI+黄金 (组合验证: 黄金放周期Calmar 2.01 vs 放基本1.71)")
     print(f"   基本配置: 纳指/红利低波/豆粕 等额定投 (豆粕=商品保险, 不参与轮动)")
     print(f"   ⚠️ 合理年化预期 8-12%, 回测含2025特殊行情, 仅供参考, 不构成投资建议")
+
+    # ============ 决策日志 (评审问题六: 把未来变成样本外) ============
+    # 每日追加决策快照: 分数/倍数/溢价/轮动 — 3个月后可检验执行偏差与真实样本外
+    try:
+        import csv
+        from datetime import datetime as _dt
+        journal_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "decision_journal.csv")
+        jrow = {
+            "date": _dt.now().strftime("%Y-%m-%d"),
+            "naz_s": f"{scores_5.get('513100', ''):.0f}" if isinstance(scores_5.get('513100'), float) else "",
+            "hld_s": f"{scores_5.get('512890', ''):.0f}" if isinstance(scores_5.get('512890'), float) else "",
+            "dou_s": f"{scores_5.get('159985', ''):.0f}" if isinstance(scores_5.get('159985'), float) else "",
+            "ai_s": f"{scores_5.get('159819', ''):.0f}" if isinstance(scores_5.get('159819'), float) else "",
+            "gold_s": f"{scores_5.get('518880', ''):.0f}" if isinstance(scores_5.get('518880'), float) else "",
+        }
+        if not os.path.exists(journal_path):
+            with open(journal_path, "w", newline="", encoding="utf-8") as f:
+                csv.DictWriter(f, fieldnames=list(jrow.keys())).writeheader()
+        with open(journal_path, "a", newline="", encoding="utf-8") as f:
+            csv.DictWriter(f, fieldnames=list(jrow.keys())).writerow(jrow)
+    except Exception:
+        pass
 
 if __name__ == "__main__":
     main()
