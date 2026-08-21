@@ -11,7 +11,7 @@ import warnings; warnings.filterwarnings("ignore")
 import os, sys
 import numpy as np, pandas as pd
 sys.stdout.reconfigure(encoding="utf-8")
-sys.path.insert(0, r"E:\autotest\autotest-script-devops\etf_scorer")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # 仓库引擎目录
 from explore_more import prep, BASE, CYC, ALL, COST, CASH_RATE
 
 def sim_pool(idx, data, is_first, pool_mode="shared", rotate=False):
@@ -67,8 +67,9 @@ def sim_pool(idx, data, is_first, pool_mode="shared", rotate=False):
                     mv = shares[loser] * pl
                     if mv > 100:
                         sell = mv * pct
-                        shares[loser] -= sell * (1 - COST) / pl
-                        rot_cash += sell  # 轮动资金进公共池
+                        # 2026-08-21 修复: 份额减 sell/pl, 现金入 sell*(1-COST) (旧写法凭空印钱)
+                        shares[loser] -= sell / pl
+                        rot_cash += sell * (1 - COST)  # 轮动资金进公共池
                         # 买入: 用公共池 + 各自现金
                         if pool_mode == "shared":
                             avail = cash + rot_cash

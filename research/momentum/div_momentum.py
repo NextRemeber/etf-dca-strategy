@@ -14,12 +14,16 @@ import os, sys
 import numpy as np, pandas as pd
 sys.stdout.reconfigure(encoding="utf-8")
 
-CACHE = r"E:\autotest\autotest-script-devops\etf_scorer\ic_cache"
+# 缓存解析: 仓库 data/ic_cache 优先, 旧外部目录兜底 (2026-08-21 去外部硬依赖)
+CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data", "ic_cache")
+_EXT_CACHE = r"E:\autotest\autotest-script-devops\etf_scorer\ic_cache"
 COST = 0.0015
 CASH_RATE = 0.02
 
 def load(code):
     f = os.path.join(CACHE, f"ohlcv_{code}.pkl")
+    if not os.path.exists(f):
+        f = os.path.join(_EXT_CACHE, f"ohlcv_{code}.pkl")
     return pd.read_pickle(f) if os.path.exists(f) else None
 
 def wslope(px):
@@ -93,9 +97,11 @@ def sim_div_mom(prices, lump, K=2, weighted=False, tp=0.0, cool_days=5):
                     cash -= buy
                     trades += 1
                 elif diff < -1e-6 * nav_now:
+                    # 卖出市值 sell: 份额减 sell/p, 现金入 sell*(1-COST) (2026-08-21 修复:
+                    # 旧写法两处都乘(1-COST) → 成本凭空消失, 卖出零费用)
                     sell = min(-diff, cur_val)
+                    shares[c] -= sell / p[c]
                     cash += sell * (1 - COST)
-                    shares[c] -= sell * (1 - COST) / p[c]
                     trades += 1
         nav_list.append(cash + sum(shares[c] * p[c] for c in prices.columns))
     return pd.Series(nav_list, index=idx), trades

@@ -1,8 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-纪律型策略探索 v2 (预加载优化):
-  A 跨区块轮动(全局10%) | B 目标权重再平衡70/30 | C1 双周 | C2 季度 | D 动态权重
-  基准: 区块内轮动30%/15%月度
+纪律型策略探索 v3 (2026-08-21 重写):
+  引擎统一收口到 backtest_core (本文件仅为实验驱动层, 不再持有 simulate 副本)。
+  修正历史: 2026-08-21 修复卖出端成本符号 bug (旧引擎每笔卖出凭空 +V×COST,
+  IRR 虚高 ~0.4pp / Calmar 虚高 ~0.07)。本文件所有数字均为修正后口径。
+
+实验 (旧4池: 纳指/红利低波 + AI/黄金):
+  基准: 区块内轮动30%/15%月度 | A 跨区块轮动(全局10%) | B 目标权重再平衡70/30
+  C1 双周 | C2 季度 | D 动态权重
+另附: v3.1 现行组合 (含豆粕+溢价闸门) 官方数字。
+
+兼容导出: prep/BASE/CYC/ALL/COST/CASH_RATE/load_ohlcv/calc_scores
+  (mixed_optimize / pool_orthogonal / momentum 系列脚本依赖)
 """
 import warnings
 warnings.filterwarnings("ignore")
@@ -10,130 +19,29 @@ import os
 import sys
 import numpy as np
 import pandas as pd
+
 sys.stdout.reconfigure(encoding="utf-8")
-sys.path.insert(0, r"E:\autotest\autotest-script-devops\etf_scorer")
-from basic_rotate import combo_metrics, load_ohlcv, calc_scores
-
-BASE = ["513100", "512890"]
-CYC = ["159819", "518880"]
-ALL = BASE + CYC
-COST, CASH_RATE = 0.0015, 0.02
-
-
-def prep(window_start, window_end):
-    """预加载: close/scores 按统一索引"""
-    idx = None
-    for c in ALL:
-        cc = load_ohlcv(c).loc[window_start:window_end].dropna()
-        idx = cc.index if idx is None else idx.union(cc.index)
-    idx = sorted(idx)
-    data = {}
-    for c in ALL:
-        cc = load_ohlcv(c).loc[window_start:window_end].dropna()
-        data[c] = {
-            "p": cc.reindex(idx).ffill(),
-            "s": calc_scores(cc).shift(1).reindex(idx).ffill(),
-        }
-    months = pd.Series(idx).dt.to_period("M")
-    is_first = months.ne(months.shift()).values
-    is_quarter = pd.Series(idx).dt.to_period("Q").ne(pd.Series(idx).dt.to_period("Q").shift()).values
-    is_biweek = np.zeros(len(idx), dtype=bool)
-    for m, grp in pd.Series(idx).groupby(months):
-        days = list(grp.index)
-        if len(days) >= 2:
-            is_biweek[days[0]] = True
-            is_biweek[days[len(days) // 2]] = True
-    return idx, data, is_first, is_biweek, is_quarter
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from backtest_core import (  # noqa: F401
+    prep as _prep, load_ohlcv, calc_scores,
+    BASE, CYC, ALL, COST, CASH_RATE, LEGACY_CONFIG, V31_CODES,
+    simulate, full_metrics, audit_conservation,
+)
 
 
-def simulate(idx, data, is_first, is_biweek, is_quarter, freq="month", cross=False,
-             target_w=False, dyn_w=False):
-    cash = 0.0
-    shares = {c: 0.0 for c in ALL}
-    nav_list = []
-    m_base, m_cyc = 3500.0, 1500.0
-    for i, dt in enumerate(idx):
-        act = False
-        if freq == "month" and is_first[i]:
-            act = True
-        elif freq == "biweek" and is_biweek[i]:
-            act = True
-        elif freq == "quarter" and is_quarter[i]:
-            act = True
-        if act:
-            cash += 10000
-            for c in BASE:
-                p = data[c]["p"].loc[dt]
-                w = 0.5
-                if dyn_w and freq == "month":
-                    s1, s2 = data[BASE[0]]["s"].loc[dt], data[BASE[1]]["s"].loc[dt]
-                    if not np.isnan(s1) and not np.isnan(s2) and s1 + s2 > 0:
-                        w = min(0.6, max(0.4, s1 / (s1 + s2)))
-                amt = min(m_base * (w / 0.5 if dyn_w else 1.0), max(cash, 0.0))
-                if amt > 0 and p > 0:
-                    shares[c] += amt * (1 - COST) / p
-                    cash -= amt
-            for c in CYC:
-                p = data[c]["p"].loc[dt]
-                sc = data[c]["s"].loc[dt]
-                mult = 1.0 if np.isnan(sc) else (3.0 if sc >= 90 else 2.0 if sc >= 70 else 1.0 if sc >= 50 else 0.25)
-                amt = min(m_cyc * mult, max(cash, 0.0))
-                if amt > 0 and p > 0:
-                    shares[c] += amt * (1 - COST) / p
-                    cash -= amt
-        if act:
-            if target_w:
-                nav = cash + sum(shares[c] * data[c]["p"].loc[dt] for c in ALL)
-                base_now = sum(shares[c] * data[c]["p"].loc[dt] for c in BASE)
-                diff_b = nav * 0.70 - base_now
-                if abs(diff_b) > nav * 0.01:
-                    src = CYC[0] if diff_b > 0 else BASE[0]
-                    dst = BASE[0] if diff_b > 0 else CYC[0]
-                    ps = data[src]["p"].loc[dt]
-                    pd_ = data[dst]["p"].loc[dt]
-                    sell = min(abs(diff_b), shares[src] * ps)
-                    if sell > 100:
-                        shares[src] -= sell * (1 - COST) / ps
-                        cash += sell
-                        buy = min(sell * (1 - COST), max(cash, 0.0))
-                        if buy > 0 and pd_ > 0:
-                            shares[dst] += buy * (1 - COST) / pd_
-                            cash -= buy
-            else:
-                groups = [BASE, CYC] if not cross else [ALL]
-                for grp in groups:
-                    s = {}
-                    for c in grp:
-                        v = data[c]["s"].loc[dt]
-                        if not np.isnan(v):
-                            s[c] = v
-                    if len(s) < 2:
-                        continue
-                    c1, c2 = list(s.keys())[:2]
-                    diff = abs(s[c1] - s[c2])
-                    if diff >= 5:
-                        loser = c1 if s[c1] < s[c2] else c2
-                        winner = c2 if loser == c1 else c1
-                        pl = data[loser]["p"].loc[dt]
-                        pw = data[winner]["p"].loc[dt]
-                        mv = shares[loser] * pl
-                        pct = 0.30 if grp is BASE else (0.15 if grp is CYC else 0.10)
-                        if freq == "biweek":
-                            pct /= 2
-                        elif freq == "quarter":
-                            pct *= 2
-                        if mv > 100:
-                            sell = mv * pct
-                            shares[loser] -= sell * (1 - COST) / pl
-                            cash += sell
-                            buy = min(sell * (1 - COST), max(cash, 0.0))
-                            if buy > 0 and pw > 0:
-                                shares[winner] += buy * (1 - COST) / pw
-                                cash -= buy
-        cash *= (1 + CASH_RATE / 252)
-        nav = cash + sum(shares[c] * data[c]["p"].loc[dt] for c in ALL)
-        nav_list.append(nav)
-    return pd.Series(nav_list, index=pd.DatetimeIndex(idx))
+def prep(ws, we, codes=None, prewarm_days=300):
+    """兼容签名: 默认旧4池 (预热线程 300 日, 2026-08-21 起规则要求)"""
+    return _prep(ws, we, codes=ALL if codes is None else codes, prewarm_days=prewarm_days)
+
+
+def _line(label, res):
+    m = full_metrics(res)
+    print("  %-30s IRR %+7.2f%%  回撤 %6.1f%%  Calmar %.2f" % (
+        label, m["irr"] * 100, m["dd"] * 100, m["calmar"]))
+
+
+LEGACY_POOL = dict(amounts=LEGACY_CONFIG["amounts"], graded=LEGACY_CONFIG["graded"],
+                   rotate_groups=LEGACY_CONFIG["rotate_groups"], premium_gate={})
 
 
 def run(ws, we, label):
@@ -146,12 +54,24 @@ def run(ws, we, label):
         ("C1 双周轮动(幅度减半)", dict(freq="biweek")),
         ("C2 季度轮动(幅度加倍)", dict(freq="quarter")),
         ("D 动态权重40/60~60/40", dict(freq="month", dyn_w=True)),
+        ("对照: 不轮动", dict(freq="month", rotate_groups=None)),
     ]
     for label_c, kw in cases:
-        nav = simulate(idx, data, f1, f2, f3, **kw)
-        irr, dd = combo_metrics(nav, 10000)
-        print("  %-30s IRR %+7.2f%%  回撤 %6.1f%%  Calmar %.2f" % (label_c, irr * 100, dd * 100, irr / abs(dd)))
+        _line(label_c, simulate(idx, data, f1, f2, f3, cfg={**LEGACY_POOL, **kw}))
 
 
-run("2020-09-23", "2026-08-11", "完整窗口")
-run("2019-06-25", "2026-08-11", "子窗口")
+def run_v31(ws, we, label):
+    """v3.1 现行组合: 5池+豆粕(不轮动)+溢价闸门 双界"""
+    print(f"\n{label} ({ws}~{we}) [v3.1 现行组合]:")
+    idx, data, f1, f2, f3 = _prep(ws, we, codes=V31_CODES)
+    for lab, kw in [("无闸门(对照)", dict(premium_gate={})),
+                    ("闸门·skip(保守界)", {}),
+                    ("闸门·defl(乐观界)", dict(gate_mode="defl"))]:
+        _line(lab, simulate(idx, data, f1, f2, f3, cfg=kw))
+
+
+if __name__ == "__main__":
+    run("2020-09-23", "2026-08-15", "完整窗口")   # 159819 上市日起
+    run("2019-06-25", "2026-08-15", "子窗口(前周期, AI缺数据自动跳过)")
+    run_v31("2020-09-23", "2026-08-15", "完整窗口")
+    run_v31("2019-06-25", "2026-08-15", "子窗口(前周期)")

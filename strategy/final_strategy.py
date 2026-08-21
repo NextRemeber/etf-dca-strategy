@@ -122,24 +122,6 @@ def score_boll(price, ma20, std20):
     if price < upper: return 8
     return 0
 
-def compute_score(s, dt):
-    """计算某日打分"""
-    idx = s.index.get_loc(dt) if dt in s.index else None
-    if idx is None or idx < 60:
-        return np.nan
-    hist = s.iloc[:idx+1]
-    ma20 = hist.rolling(20).mean().iloc[-1]
-    ma60 = hist.rolling(60).mean().iloc[-1]
-    std20 = hist.rolling(20).std().iloc[-1]
-    price = hist.iloc[-1]
-    if np.isnan(ma60): return np.nan
-    dev60 = (price/ma60 - 1)*100
-    mom60 = (price/hist.iloc[-61] - 1)*100 if len(hist) > 61 else 0
-    s1 = score_ma60(dev60)
-    s2 = score_mom60(mom60)
-    s3 = score_boll(price, ma20, std20)
-    return s1 + s2 + s3
-
 def compute_score_series(s):
     """计算全历史打分序列 (用于选赛道均值)"""
     ma20 = s.rolling(20).mean()
@@ -160,14 +142,24 @@ def compute_score_series(s):
 
 # ============ 数据 ============
 def load_qfq(code):
-    f = os.path.join(CACHE, f"qfq_{code}.pkl")
-    if os.path.exists(f):
-        return pd.read_pickle(f).iloc[:, 0]
-    # 回退: ohlcv 前复权收盘 (扩充候选数据)
-    f2 = os.path.join(CACHE, f"ohlcv_{code}.pkl")
-    if os.path.exists(f2):
-        return pd.read_pickle(f2)["close"]
-    return None
+    """加载前复权收盘价: qfq_* 与 ohlcv_* 两套缓存中取末条更新者
+    (2026-08-21 修复: 旧版固定优先 qfq_*, 曾被陈旧 qfq 遮蔽已刷新的 ohlcv)"""
+    best, best_last = None, None
+    for name in (f"qfq_{code}.pkl", f"ohlcv_{code}.pkl"):
+        f = os.path.join(CACHE, name)
+        if not os.path.exists(f):
+            continue
+        try:
+            d = pd.read_pickle(f)
+            s = d.iloc[:, 0] if isinstance(d, pd.DataFrame) and "close" not in d.columns else (
+                d["close"] if isinstance(d, pd.DataFrame) else d)
+            if s is None or len(s) == 0:
+                continue
+            if best_last is None or s.index[-1] > best_last:
+                best, best_last = s, s.index[-1]
+        except Exception:
+            continue
+    return best
 
 def get_realtime_price(code):
     """腾讯实时价"""
@@ -272,13 +264,59 @@ def _hdr(title, width=70, icon="📊"):
     """区块标题: 上下横线"""
     return f"{icon} {title}\n{'─' * width}"
 
+# ============ 数据新鲜度 (2026-08-21: 日报曾用 9 天前的缓存分数决策) ============
+STALE_DAYS = 5   # 缓存末条距今超过此天数 → 醒目警告
+
+def check_cache_staleness(codes, exit_on_missing=True):
+    """检查核心标的缓存末条日期, 陈旧则醒目警告。返回 {code: 距今天数}"""
+    today = pd.Timestamp.now().normalize()
+    gaps = {}
+    stale_list = []
+    for c in codes:
+        s = load_qfq(c)
+        if s is None:
+            stale_list.append(f"{c}(缺失)")
+            continue
+        gap = int((today - s.index[-1]).days)
+        gaps[c] = gap
+        if gap > STALE_DAYS:
+            stale_list.append(f"{c}(距今{gap}天, 末条{s.index[-1].date()})")
+    if stale_list:
+        print("═" * 70)
+        print("  ⚠️⚠️ 数据缓存陈旧: " + ", ".join(stale_list))
+        print("     打分/分档/轮动指令基于旧价格! 请先执行数据更新:")
+        print("     python research/engine/fetch_ohlcv.py  或  本脚本加 --refresh-data")
+        print("═" * 70)
+    return gaps
+
+def refresh_data(codes):
+    """增量刷新核心标的缓存 (复用 research/engine/fetch_ohlcv)"""
+    sys.path.insert(0, os.path.join(BASE_DIR, "..", "research", "engine"))
+    try:
+        from fetch_ohlcv import update_code
+    except ImportError:
+        print("  ❌ 无法导入 fetch_ohlcv (research/engine/)")
+        return
+    for c in codes:
+        st = update_code(c)
+        print(f"  数据刷新 {c}: {st}")
+
+
 # ============ 主流程 ============
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--monthly-budget", type=float, default=3000,
                         help="周期卫星月预算(元), 基本配置=此值×7/3 (周期30%+基本70%)")
     parser.add_argument("--lookback-years", type=int, default=LOOKBACK_YEARS)
+    parser.add_argument("--refresh-data", action="store_true",
+                        help="运行前增量刷新核心标的缓存 (research/engine/fetch_ohlcv)")
     args = parser.parse_args()
+
+    core_codes = list(SLOW_POOL.keys()) + FIXED_POOL
+    if args.refresh_data:
+        print("🔄 刷新数据缓存 (核心标的)...")
+        refresh_data(core_codes)
+    check_cache_staleness(core_codes)
 
     # 70/30 预算口径: 周期卫星30% + 基本配置70%
     basic_budget = args.monthly_budget * 7 / 3
@@ -517,6 +555,8 @@ def main():
         aligns=['l', 'l', 'r', 'l', 'l', 'r', 'r', 'l', 'l'],
     ))
     print(f"\n   ── 周期卫星本月合计: {total:.0f}元 (基本配置另计)")
+    print(f"   注: ≥2x/3x 加投从现金储备池扣 (引擎约束: 不透支, 需前期 0.25x 月积累),")
+    print(f"       现金不足时按池余额可投额执行, 不动用未来预算")
 
     # 池内状态评估: 分数每日更新, 池子固定不换标
     print(f"\n{_hdr('池内状态评估 (分数每日更新, 池子固定)', icon='🔄')}")
@@ -591,10 +631,13 @@ def main():
         if code in SLOW_QDII:
             try:
                 prem = get_premium(code, price)
-                if prem and prem['premium'] > 8:
-                    mult = 0.0
-                    level = f"🚫 溢价{prem['premium']:+.1f}%>8%暂停场内"
+                if prem:
                     prem_str = f"{prem['premium']:+.1f}%"
+                    if prem.get("stale"):
+                        prem_str += "⚠️净值陈旧"
+                    if prem['premium'] > 8:
+                        mult = 0.0
+                        level = f"🚫 溢价{prem['premium']:+.1f}%>8%暂停场内"
             except Exception:
                 pass
 

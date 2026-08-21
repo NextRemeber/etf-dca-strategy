@@ -8,11 +8,15 @@ import os, sys
 import numpy as np, pandas as pd
 sys.stdout.reconfigure(encoding="utf-8")
 
-CACHE = r"E:\autotest\autotest-script-devops\etf_scorer\ic_cache"
+# 缓存解析: 仓库 data/ic_cache 优先, 旧外部目录兜底 (2026-08-21 去外部硬依赖)
+CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data", "ic_cache")
+_EXT_CACHE = r"E:\autotest\autotest-script-devops\etf_scorer\ic_cache"
 COST = 0.0015
 
 def load(code):
     f = os.path.join(CACHE, f"ohlcv_{code}.pkl")
+    if not os.path.exists(f):
+        f = os.path.join(_EXT_CACHE, f"ohlcv_{code}.pkl")
     return pd.read_pickle(f) if os.path.exists(f) else None
 
 def wslope(px):

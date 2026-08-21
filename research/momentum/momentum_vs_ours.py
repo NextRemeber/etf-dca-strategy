@@ -9,9 +9,9 @@ import warnings; warnings.filterwarnings("ignore")
 import os, sys
 import numpy as np, pandas as pd
 sys.stdout.reconfigure(encoding="utf-8")
-sys.path.insert(0, r"E:\autotest\autotest-script-devops\etf_scorer")
-from explore_more import prep, BASE, CYC, ALL, COST, CASH_RATE
-from momentum_v2 import wslope, load
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "engine"))
+from explore_more import prep, BASE, CYC, ALL, COST, CASH_RATE  # 仓库引擎 (backtest_core)
+from momentum_correct import wslope, load
 
 def simulate_ours(idx, data, is_first):
     cash = 0.0; shares = {c: 0.0 for c in ALL}
@@ -47,8 +47,10 @@ def simulate_ours(idx, data, is_first):
                     mv = shares[loser] * pl
                     if mv > 100:
                         sell = mv * pct
-                        shares[loser] -= sell * (1 - COST) / pl
-                        cash += sell
+                        # 2026-08-21 修复: 份额减 sell/pl, 现金入 sell*(1-COST)
+                        # (旧写法每笔卖出凭空 +V×COST, IRR 虚高 ~0.4pp)
+                        shares[loser] -= sell / pl
+                        cash += sell * (1 - COST)
                         buy = min(sell * (1 - COST), max(cash, 0.0))
                         if buy > 0 and pw > 0:
                             shares[winner] += buy * (1 - COST) / pw; cash -= buy
@@ -93,9 +95,9 @@ def sim_mom(prices, win=25, tp=0.03, cool_days=5, monthly=10000):
     return pd.Series(nav_list, index=prices.index), trades
 
 def metrics(nav, start):
-    total = nav.iloc[-1] / nav.iloc[0] - 1
+    """2026-08-21 修正: 定投口径下 (1+总收益)^(1/年) 的'年化(资产)'含入金、数值无意义
+    (曾显示 123%/Calmar 7.2), 改为 IRR 口径 Calmar"""
     yrs = (nav.index[-1] - nav.index[0]).days / 365.25
-    ann = (1 + total) ** (1 / yrs) - 1
     dd = (nav / nav.cummax() - 1).min()
     months = nav.index.to_period("M")
     is_first = pd.Series(months).ne(pd.Series(months).shift()).values
@@ -108,17 +110,17 @@ def metrics(nav, start):
         if npv(mid) > 0: lo = mid
         else: hi = mid
     irr = (lo + hi) / 2
-    return total, ann, dd, ann / abs(dd) if dd < 0 else np.nan, irr
+    return irr, dd, irr / abs(dd) if dd < 0 else np.nan
 
 idx, data, f1, *_ = prep("2020-08-17", "2026-08-15")
 nav_ours = simulate_ours(idx, data, f1)
-tot, ann, dd, cal, irr = metrics(nav_ours, idx[0])
+irr, dd, cal = metrics(nav_ours, idx[0])
 print("=" * 78)
-print("公平对比 (2020-08~2026-08, 每月10000, 共享现金池+2%货基+0.15%成本)")
+print("公平对比 (2020-08~2026-08, 每月10000, 共享现金池+2%货基+0.15%成本, 成本口径已修正)")
 print("=" * 78)
 print("A 我们现状(基本1x+周期S3+轮动30/15):")
-print("   终值 %s | IRR %+.1f%% | 年化(资产) %.1f%% | 回撤 %.1f%% | Calmar %.2f" % (
-    format(nav_ours.iloc[-1], ",.0f"), irr*100, ann*100, dd*100, cal))
+print("   终值 %s | IRR %+.1f%% | 回撤 %.1f%% | Calmar %.2f" % (
+    format(nav_ours.iloc[-1], ",.0f"), irr*100, dd*100, cal))
 
 MOM_POOL = ["159915", "513100", "513520", "518880"]
 prices = None
@@ -128,11 +130,11 @@ for c in MOM_POOL:
     prices = s.to_frame(c) if prices is None else prices.join(s.rename(c), how="outer")
 prices = prices.ffill().dropna().loc["2020-08-17":"2026-08-15"]
 nav_mom, tr = sim_mom(prices)
-tot, ann, dd, cal, irr = metrics(nav_mom, prices.index[0])
+irr, dd, cal = metrics(nav_mom, prices.index[0])
 print("")
 print("B 动量轮动池(增量版, 3%止盈+冷却, 全仓动量第一, 4标的):")
-print("   终值 %s | IRR %+.1f%% | 年化(资产) %.1f%% | 回撤 %.1f%% | Calmar %.2f | 换手%d次" % (
-    format(nav_mom.iloc[-1], ",.0f"), irr*100, ann*100, dd*100, cal, tr))
+print("   终值 %s | IRR %+.1f%% | 回撤 %.1f%% | Calmar %.2f | 换手%d次" % (
+    format(nav_mom.iloc[-1], ",.0f"), irr*100, dd*100, cal, tr))
 
 print("")
 print("分年度对比:")

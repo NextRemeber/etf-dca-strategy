@@ -8,12 +8,24 @@
 """
 import warnings
 warnings.filterwarnings("ignore")
+import os
 import sys
 import numpy as np
 import pandas as pd
 sys.stdout.reconfigure(encoding="utf-8")
-sys.path.insert(0, r"E:\autotest\autotest-script-devops\etf_scorer")
-from weight_sensitivity import load, compute_factors, POOL
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import backtest_core as bc
+
+# 2026-08-21: 去外部依赖 (原 import 自 E:\autotest\...\weight_sensitivity), 改用仓库引擎
+load = bc.load_ohlcv
+compute_factors = bc.factor_series
+POOL = {  # 周期池 19 只 (与 fetch_ohlcv 同口径)
+    "512480": "半导体", "515030": "新能源", "159819": "AI", "588000": "科创50",
+    "512800": "银行", "512980": "传媒", "512660": "军工", "512010": "医药",
+    "515170": "食品饮料", "159915": "创业板", "515790": "光伏", "516160": "电池",
+    "512200": "地产", "159870": "化工", "512400": "有色", "516110": "建材",
+    "510300": "沪深300", "510500": "中证500", "512100": "中证1000",
+}
 
 COST = 0.0015
 CASH_RATE = 0.02
@@ -73,7 +85,8 @@ def simulate_reserve(s, scores=None, pos_fn=None, monthly=1000, thr=(90, 70, 50)
 
 
 def calc_metrics(nav, monthly=1000):
-    """IRR(每月预算现金流) + 最大回撤 + 年化Sharpe"""
+    """IRR(每月预算现金流, 二分法 — rules 硬性口径, 2026-08-21 弃牛顿防发散) + 最大回撤 + 年化Sharpe
+    注: Sharpe 直接算在含入金的 NAV 上会被现金流污染, 仅作横向对比参考 (同口径可比)"""
     rets = nav.pct_change().dropna()
     dd = (nav / nav.cummax() - 1).min()
     sharpe = rets.mean() / rets.std() * np.sqrt(252) if rets.std() > 0 else 0
@@ -84,21 +97,8 @@ def calc_metrics(nav, monthly=1000):
     for k, dt in enumerate(list(nav.index[is_first])):
         cashflows.append(((dt - start).days / 365.25, -monthly))
     cashflows.append(((nav.index[-1] - start).days / 365.25, nav.iloc[-1]))
-
-    def npv(r):
-        return sum(cf / (1 + r) ** t for t, cf in cashflows)
-
-    rate = 0.05
-    for _ in range(100):
-        f = npv(rate)
-        fp = (npv(rate + 1e-4) - npv(rate)) / 1e-4
-        if abs(fp) < 1e-10:
-            break
-        rn = rate - f / fp
-        if abs(rn - rate) < 1e-8:
-            break
-        rate = rn
-    return rate, dd, sharpe
+    rate = bc.irr_bisect(cashflows)
+    return (rate if rate is not None else -0.99), dd, sharpe
 
 
 def make_kelly_pos(win_rate, gains, losses, pos_max=0.75):

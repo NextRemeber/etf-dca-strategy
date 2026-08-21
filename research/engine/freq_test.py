@@ -10,7 +10,9 @@ import os, sys
 import numpy as np, pandas as pd
 sys.stdout.reconfigure(encoding="utf-8")
 
-CACHE = r"E:\autotest\autotest-script-devops\etf_scorer\ic_cache"
+# 缓存解析: 仓库 data/ic_cache 优先, 旧外部目录兜底 (2026-08-21 去外部硬依赖)
+CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data", "ic_cache")
+_EXT_CACHE = r"E:\autotest\autotest-script-devops\etf_scorer\ic_cache"
 COST = 0.0015; CASH_RATE = 0.02
 CYCLE = {"159819": "AI", "518880": "黄金"}
 SLOW = {"513100": "纳指", "512890": "红利低波"}
@@ -19,6 +21,8 @@ PREWARM = "2019-01-01"
 
 def load(code):
     f = os.path.join(CACHE, f"ohlcv_{code}.pkl")
+    if not os.path.exists(f):
+        f = os.path.join(_EXT_CACHE, f"ohlcv_{code}.pkl")
     return pd.read_pickle(f) if os.path.exists(f) else None
 
 def calc_scores(c):
@@ -46,7 +50,9 @@ def invest_dates(idx, freq):
         keep = set(weeks[::2])
         return set(idx[[w and pp in keep for w, pp in zip(wk, p)]])
 
-def simulate(c, scores, freq, monthly=1000.0):
+def simulate(c, scores, freq, monthly=1000.0, min_fee=0.0):
+    """min_fee: 最低佣金(元/笔)。小额定投受最低佣金支配 (250元周投+5元下限=2%实际成本),
+    2026-08-21 起双档对比 (0元=免五券商 / 5元=传统下限), 修正频率结论对成本参数的依赖"""
     per = {"week": monthly/4.33, "biweek": monthly/2.165, "month": monthly}[freq]
     dates = invest_dates(c.index, freq)
     cash, shares, nav_list, total_inv = 0.0, 0.0, [], 0.0
@@ -64,7 +70,8 @@ def simulate(c, scores, freq, monthly=1000.0):
             amt = min(per*mult, max(cash + per, 0.0))  # 本期预算到账后可投
             cash += per - amt
             if amt > 0 and p > 0:
-                shares += amt*(1-COST)/p
+                fee = max(amt*COST, min_fee) if min_fee > 0 else amt*COST
+                shares += (amt-fee)/p
                 total_inv += amt
                 cfs.append(((dt-start).days/365.25, -amt))
         cash *= (1 + CASH_RATE/252)
@@ -92,20 +99,21 @@ for code in list(CYCLE)+list(SLOW):
     data[code] = (full, sim)
     print(f"{code} 模拟段 {sim.index[0].date()} ~ {sim.index[-1].date()} {len(sim)}天")
 
-print("\n" + "="*80)
-print(f"定投频率对比 ({START}~{END}) | 每标月预算1000元 | 周期标S3分档, 基本标1x")
-print("="*80)
-print("%-6s %10s %10s %10s %8s %10s %8s" % ("频率","总投入","总终值","总收益","IRR","最大回撤","Calmar"))
-for freq, label in [("week","每周"),("biweek","双周"),("month","每月")]:
-    t_inv = t_fin = 0.0
-    irrs, dds = [], []
-    for code, name in {**CYCLE, **SLOW}.items():
-        full, sim = data[code]
-        c = sim["close"]
-        scores = calc_scores(full["close"]).loc[START:].shift(1) if code in CYCLE else pd.Series(50.0, index=c.index)
-        fin, inv, irr, dd, cal = simulate(c, scores, freq)
-        t_inv += inv; t_fin += fin; irrs.append(irr); dds.append(dd)
-    # 组合层面: 用平均IRR和最深回撤近似
-    print("%-6s %10.0f %10.0f %+10.0f %+7.2f%% %9.1f%% %8.2f" % (
-        label, t_inv, t_fin, t_fin-t_inv, np.mean(irrs)*100, min(dds)*100,
-        np.mean(irrs)/abs(min(dds))))
+for min_fee, fee_label in [(0.0, "免五券商(0元下限)"), (5.0, "传统下限(5元/笔)")]:
+    print("\n" + "="*80)
+    print(f"定投频率对比 ({START}~{END}) | 每标月预算1000元 | 周期标S3分档, 基本标1x | 成本: 0.15% + 最低佣金[{fee_label}]")
+    print("="*80)
+    print("%-6s %10s %10s %10s %8s %10s %8s" % ("频率","总投入","总终值","总收益","IRR","最大回撤","Calmar"))
+    for freq, label in [("week","每周"),("biweek","双周"),("month","每月")]:
+        t_inv = t_fin = 0.0
+        irrs, dds = [], []
+        for code, name in {**CYCLE, **SLOW}.items():
+            full, sim = data[code]
+            c = sim["close"]
+            scores = calc_scores(full["close"]).loc[START:].shift(1) if code in CYCLE else pd.Series(50.0, index=c.index)
+            fin, inv, irr, dd, cal = simulate(c, scores, freq, min_fee=min_fee)
+            t_inv += inv; t_fin += fin; irrs.append(irr); dds.append(dd)
+        # 组合层面: 用平均IRR和最深回撤近似
+        print("%-6s %10.0f %10.0f %+10.0f %+7.2f%% %9.1f%% %8.2f" % (
+            label, t_inv, t_fin, t_fin-t_inv, np.mean(irrs)*100, min(dds)*100,
+            np.mean(irrs)/abs(min(dds))))

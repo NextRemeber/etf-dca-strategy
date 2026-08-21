@@ -11,9 +11,9 @@ import warnings; warnings.filterwarnings("ignore")
 import os, sys
 import numpy as np, pandas as pd
 sys.stdout.reconfigure(encoding="utf-8")
-sys.path.insert(0, r"E:\autotest\autotest-script-devops\etf_scorer")
-from explore_more import prep, COST, CASH_RATE
-from momentum_v2 import wslope, load
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "engine"))
+from explore_more import prep, COST, CASH_RATE  # 仓库引擎 (backtest_core)
+from momentum_correct import wslope, load
 
 def sim_mom_lump(prices, lump, win=25, tp=0.03, cool_days=5):
     cash, hold, hold_sh, peak = float(lump), None, 0.0, 0.0
@@ -100,8 +100,9 @@ def build_dca(pool_base, pool_cyc, ws, we, m_base=1750.0, m_cyc=750.0, rot=True)
                     mv = shares[loser] * p[loser]
                     if mv > 100:
                         sell = mv * pct
-                        shares[loser] -= sell * (1 - COST) / p[loser]
-                        cash += sell
+                        # 2026-08-21 修复: 份额减 sell/pl, 现金入 sell*(1-COST) (旧写法凭空印钱)
+                        shares[loser] -= sell / p[loser]
+                        cash += sell * (1 - COST)
                         buy = min(sell * (1 - COST), max(cash, 0.0))
                         if buy > 0 and p[winner] > 0:
                             shares[winner] += buy * (1 - COST) / p[winner]; cash -= buy

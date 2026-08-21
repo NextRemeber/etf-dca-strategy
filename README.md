@@ -36,26 +36,27 @@
 ```
 etf-quant/
 ├── strategy/            # 生产脚本（唯一运行入口）
-│   ├── final_strategy.py        # 每日日报（定时任务 11:00 调用）
-│   └── etf_quant_strategy.py    # 行情/指数库
+│   ├── final_strategy.py        # 每日日报（定时任务 11:00 调用; --refresh-data 增量刷新缓存）
+│   └── etf_quant_strategy.py    # 行情/指数/溢价工具库（内含已证伪的历史策略, 仅留痕）
 ├── research/            # 回测引擎与研究脚本
-│   ├── engine/          # 核心引擎（已过引擎三查审计）
-│   │   ├── explore_more.py      # 核心定投引擎（共享现金池+分档+轮动）
+│   ├── engine/          # 核心引擎
+│   │   ├── backtest_core.py     # ★ 统一引擎（正确成本/预热/交易日志/三账守恒审计/溢价闸门双界）
+│   │   ├── explore_more.py      # 实验驱动层（薄封装, 不再持有引擎副本）
 │   │   ├── mixed_optimize.py    # 混合场景引擎（存量+增量参数化）
-│   │   ├── engine_audit.py      # 引擎审计三查
+│   │   ├── engine_audit.py      # 三账守恒审计 A-G（含已知bug回归用例）
 │   │   ├── pool_orthogonal.py   # 池口径正交分解
 │   │   ├── reserve_engine.py    # 现金储备制引擎
-│   │   ├── freq_test.py         # 定投频率对比
-│   │   └── fetch_ohlcv.py       # 数据拉取（腾讯 fqkline）
+│   │   ├── freq_test.py         # 定投频率对比（含最低佣金双档敏感性）
+│   │   └── fetch_ohlcv.py       # 数据拉取（仓库缓存/增量更新/分红检测全量重拉）
 │   └── momentum/        # 动量轮动研究系列（外部策略复刻/证伪）
 ├── data/
-│   └── ic_cache/        # 前复权K线缓存（腾讯，fetch_ohlcv 可重建）
+│   └── ic_cache/        # 前复权K线缓存（腾讯, fetch_ohlcv 增量维护）
 ├── rules/               # dev-harness 领域规则副本（权威源在 E:/dev-harness/domains/etf-quant/）
 ├── docs/
 │   ├── 01-策略体系.md
-│   ├── 02-验证报告.md
+│   ├── 02-验证报告.md           # 含 2026-08-21 修正后复验章节（权威数字）
 │   ├── 03-执行手册.md
-│   └── 04-最终方案-v3.1.md
+│   └── 04-最终方案-v3.1.md      # 含 v3.1.1 修正说明
 └── README.md
 ```
 
@@ -65,18 +66,21 @@ etf-quant/
 # 每日日报（定时任务 11:00 自动调用）
 C:/Anaconda3/python strategy/final_strategy.py --monthly-budget 3000
 
-# 数据更新（重新拉取全部历史K线）
+# 数据更新（增量: 只拉陈旧标的尾部; 重叠段价格不一致(分红重算)自动全量重拉）
 C:/Anaconda3/python research/engine/fetch_ohlcv.py
 
-# 引擎审计（新引擎发布前必跑）
+# 引擎审计（新引擎发布前必跑; A-G 七项 + 已知bug回归用例）
 C:/Anaconda3/python research/engine/engine_audit.py
 ```
 
-## 核心结论速查（详见 docs/04-最终方案-v3.1.md）
+## 核心结论速查（2026-08-21 引擎修正后口径，详见 docs/02 修正章节）
 
-- 合理年化 8-12%（回测含 2025 特殊行情），定投口径回撤 -8.3%
-- 已证伪方向：动量轮动/止盈/机械换标/自动卖出/顶部预测/触发加投 等 16 项（防重复研究）
-- 引擎三查：当日价成交 / 分数 shift(1) / 现金恒等式（组合级 IRR ÷ 组合级回撤）
+- 旧4池：纯定投 17.2%/1.85 → 轮动 20.8%/2.52（**轮动增益 +3.6pp**）；子窗口 19.4%/2.17
+- v3.1 现行组合（含豆粕）：无闸门 18.5%/2.64；溢价闸门区间 15.6~16.9%（skip~defl 双界）
+- 合理年化预期 8-12% 不变（回测含 2025 特殊行情），样本外 Calmar 预期 ~1.7
+- 已证伪方向 16 项不变（防重复研究）；修正后动量对比差距更大（我方 2.51 vs 动量 1.02）
+- 引擎审计：三账守恒（现金账/份额账/财富守恒）+ 无未来函数 + bug 回归用例
+- ⚠️ 2026-08-21 修复卖出成本符号等 4 项引擎 bug，旧文档 2.55/2.60 等数字作废，以 docs/02 修正表为准
 
 ## 免责声明
 

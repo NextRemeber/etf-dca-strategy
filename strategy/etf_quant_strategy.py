@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股ETF量化投资策略引擎
+A股ETF量化投资策略引擎 (行情/指数工具库 + 历史策略展示)
 基于多指标共振的智能定投系统
+
+⚠️ 2026-08-21 定位声明:
+  本文件的角色是 **行情/指数/溢价工具库** (final_strategy.py 从此处 import
+  fetch_index_data / format_index_header / fetch_realtime / get_premium)。
+  下方的 RSI 定投 / BOLL 计划 / 多指标共振 / 网格等完整策略流程属于
+  **历史版本**, 其调节方式已在系统性回测中证伪 (详见 docs/04 第九章),
+  保留仅为研究留痕 — 生产决策入口是 final_strategy.py, 请勿按本文件
+  的 --rsi/--boll/--daily 输出执行实盘。
 
 ETF: 黄金ETF(518880) / 纳指ETF(513100) / 红利低波ETF(512890)
 指标: BOLL20 + RSI14 + MACD + MA系统 + 成交量分析
 
 用法:
-    python etf_quant_strategy.py                     # 默认输出完整报告
-    python etf_quant_strategy.py --daily             # 每日操作建议
-    python etf_quant_strategy.py --monthly           # 月度定投方案
-    python etf_quant_strategy.py --signal-only       # 仅输出信号摘要
-    python etf_quant_strategy.py --rsi               # RSI定投方案（定时任务用）
+    python etf_quant_strategy.py --daily             # 每日操作建议 (历史版)
+    python etf_quant_strategy.py --monthly           # 月度定投方案 (历史版)
+    python etf_quant_strategy.py --signal-only       # 仅输出信号摘要 (历史版)
+    python etf_quant_strategy.py --rsi               # RSI定投方案 (历史版)
 """
 
 import requests
@@ -157,9 +164,11 @@ def fetch_klines_full_tencent(code: str, days: int = 60) -> Optional[Dict]:
 
 
 def fetch_realtime(code: str) -> Optional[dict]:
-    """获取ETF实时行情 (新浪优先, 腾讯兜底)"""
+    """获取ETF实时行情 (新浪优先, 腾讯兜底)
+    2026-08-21 修复: sina 分支 sh 前缀写死, 深市 ETF (159xxx) 永远走死分支"""
     def sina():
-        url = f"https://hq.sinajs.cn/list=sh{code}"
+        mkt = "sh" if code.startswith(("5", "6", "9")) else "sz"
+        url = f"https://hq.sinajs.cn/list={mkt}{code}"
         resp = requests.get(url, headers={
             "User-Agent": "Mozilla/5.0",
             "Referer": "https://finance.sina.com.cn"
@@ -180,11 +189,12 @@ def fetch_realtime(code: str) -> Optional[dict]:
 
 
 def fetch_klines(code: str, days: int = 60) -> List[float]:
-    """获取历史K线收盘价 (新浪优先, 腾讯前复权兜底)"""
+    """获取历史K线收盘价 (新浪优先, 腾讯前复权兜底; 2026-08-21 修复深市前缀)"""
     def sina():
+        mkt = "sh" if code.startswith(("5", "6", "9")) else "sz"
         url = (f"https://quotes.sina.cn/cn/api/jsonp.php/"
                f"var%20_shrp_{code}=/CN_MarketDataService.getKLineData?"
-               f"symbol=sh{code}&scale=240&ma=no&datalen={days}")
+               f"symbol={mkt}{code}&scale=240&ma=no&datalen={days}")
         resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         matches = re.findall(r'"close":"([\d.]+)"', resp.text)
         return [float(m) for m in matches] if matches else []
@@ -193,11 +203,12 @@ def fetch_klines(code: str, days: int = 60) -> List[float]:
 
 
 def fetch_klines_full(code: str, days: int = 60) -> Optional[Dict]:
-    """获取全量 K 线（开高低收量, 新浪优先, 腾讯前复权兜底）"""
+    """获取全量 K 线（开高低收量, 新浪优先, 腾讯前复权兜底; 2026-08-21 修复深市前缀）"""
     def sina():
+        mkt = "sh" if code.startswith(("5", "6", "9")) else "sz"
         url = (f"https://quotes.sina.cn/cn/api/jsonp.php/"
                f"var%20_shrp_{code}=/CN_MarketDataService.getKLineData?"
-               f"symbol=sh{code}&scale=240&ma=no&datalen={days}")
+               f"symbol={mkt}{code}&scale=240&ma=no&datalen={days}")
         resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         text = resp.text
         import json as _json
@@ -342,11 +353,14 @@ PREMIUM_HALT = 8.0  # 溢价暂停阈值(%)
 
 
 def fetch_etf_nav(etf_code: str) -> Optional[Tuple[float, str]]:
-    """从东财F10获取ETF官方净值, 返回(净值, 净值日期)"""
+    """从东财F10获取ETF官方净值, 返回(净值, 净值日期)
+    2026-08-21 修复: 日期硬编码 2026-01-01~2026-12-31 (2027年起静默失效) → 改动态近30天"""
     try:
+        end = datetime.now()
+        start = end - timedelta(days=30)
         url = "https://api.fund.eastmoney.com/f10/lsjz"
         params = {"fundCode": etf_code, "pageIndex": 1, "pageSize": 3,
-                  "startDate": "2026-01-01", "endDate": "2026-12-31"}
+                  "startDate": start.strftime("%Y-%m-%d"), "endDate": end.strftime("%Y-%m-%d")}
         headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://fundf10.eastmoney.com/"}
         resp = requests.get(url, params=params, headers=headers, timeout=10)
         rows = ((resp.json().get("Data") or {}).get("LSJZList") or [])
@@ -359,8 +373,10 @@ def fetch_etf_nav(etf_code: str) -> Optional[Tuple[float, str]]:
 
 def get_premium(etf_code: str, current: float) -> Optional[dict]:
     """
-    计算溢价率(仅QDII)。返回 {"premium": %, "nav":, "nav_date":} 或 None。
+    计算溢价率(仅QDII)。返回 {"premium": %, "nav":, "nav_date":, "nav_age_days":} 或 None。
     非QDII(黄金/红利低波)溢价≈0, 无参考价值, 返回None。
+    2026-08-21: 增加 nav_age_days (净值距今自然日数) — QDII 净值 T+1/T+2 滞后为常态,
+    超过 4 天视为陈旧, 溢价估计失真 (快速波动期尤其), 调用方应展示并谨慎对待。
     """
     if etf_code not in QDII_CODES:
         return None
@@ -368,8 +384,13 @@ def get_premium(etf_code: str, current: float) -> Optional[dict]:
     if nav_info is None or nav_info[0] <= 0:
         return None
     nav, nav_date = nav_info
+    try:
+        age = (datetime.now() - datetime.strptime(nav_date, "%Y-%m-%d")).days
+    except Exception:
+        age = None
     premium = (current / nav - 1) * 100
-    return {"premium": round(premium, 2), "nav": nav, "nav_date": nav_date}
+    return {"premium": round(premium, 2), "nav": nav, "nav_date": nav_date,
+            "nav_age_days": age, "stale": age is not None and age > 4}
 
 
 def fetch_index_data() -> List[dict]:
