@@ -306,7 +306,7 @@ def refresh_data(codes):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--monthly-budget", type=float, default=3000,
-                        help="周期卫星月预算(元), 基本配置=此值×7/3 (周期30%+基本70%)")
+                        help="周期卫星月预算(元), 基本配置=此值×6/4 (周期40%+基本60%)")
     parser.add_argument("--lookback-years", type=int, default=LOOKBACK_YEARS)
     parser.add_argument("--refresh-data", action="store_true",
                         help="运行前增量刷新核心标的缓存 (research/engine/fetch_ohlcv)")
@@ -318,8 +318,8 @@ def main():
         refresh_data(core_codes)
     check_cache_staleness(core_codes)
 
-    # 70/30 预算口径: 周期卫星30% + 基本配置70%
-    basic_budget = args.monthly_budget * 7 / 3
+    # 60/40 预算口径: 周期卫星40% + 基本配置60% (2026-08-21 修复后引擎重跑: Calmar 2.71→2.82)
+    basic_budget = args.monthly_budget * 6 / 4
 
     today = pd.Timestamp.now().normalize()
     lookback_start = today - pd.DateOffset(years=args.lookback_years)
@@ -328,7 +328,7 @@ def main():
     W = 70
     print("═" * W)
     print(f"  📊 ETF 定投策略日报 | {today.strftime('%Y-%m-%d')}")
-    print(f"     策略: 基本配置(纯定投70%) + 周期卫星(分档30%)")
+    print(f"     策略: 基本配置(纯定投60%) + 周期卫星(分档40%)")
     print("═" * W)
 
     # 大盘指数头 (复用 etf_quant_strategy)
@@ -503,7 +503,7 @@ def main():
     print(f"       (后250日超额-6pp, 双周期验证) → 纳入年度替换审视 ③ 自动卖出已验证亏钱(IRR砍85%)")
 
     # 3. 每只当前分数 → 定投倍数
-    print(f"\n{_hdr(f'今日定投清单 (周期卫星30%, 月预算{args.monthly_budget:.0f}元)', icon='💰')}")
+    print(f"\n{_hdr(f'今日定投清单 (周期卫星40%, 月预算{args.monthly_budget:.0f}元)', icon='💰')}")
     total = 0
     rows = []
     for code in pool:
@@ -611,7 +611,7 @@ def main():
     print(f"       换标需综合判断(强势期+主题逻辑), 不因单日信号机械执行")
 
     # ============ 基本配置类资产 (纯定投, 已验证调节无效) ============
-    print(f"\n{_hdr(f'基本配置资产 (纳指/红利低波/豆粕, 占预算70%={basic_budget:.0f}元/月) | 纯定投', icon='🏦')}")
+    print(f"\n{_hdr(f'基本配置资产 (纳指/红利低波/豆粕, 占预算60%={basic_budget:.0f}元/月) | 纯定投', icon='🏦')}")
     print(f"   策略: 每月等额定投, 不做BOLL调节 (豆粕=商品保险, 低相关0.104, 不参与轮动)")
     print(f"   验证: BOLL中轨调节对慢牛资产无超额收益, 纯定投最优; 豆粕加入三窗口 Calmar 全面提升\n")
 

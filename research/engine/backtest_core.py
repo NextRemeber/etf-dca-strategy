@@ -108,12 +108,13 @@ def calc_scores(c, weights=(1.0, 1.0, 1.0)):
 
 
 # ============ 组合配置 ============
-# v3.1 现行组合: 基本70% (纳指/红利低波/豆粕 各2333) + 周期30% (AI/黄金 各1500)
+# v3.2 现行组合: 基本60% (纳指/红利低波/豆粕 各2000) + 周期40% (AI/黄金 各2000)
 # 豆粕不参与轮动 (保险角色 1x); 纳指溢价>8% 改场外
+# 2026-08-21 修复后引擎重跑: 60/40 Calmar 2.82 > 70/30 2.71 (两轮一致)
 V31_CODES = ["513100", "512890", "159985", "159819", "518880"]
 V31_CONFIG = dict(
-    amounts={"513100": 2333.33, "512890": 2333.33, "159985": 2333.33,
-             "159819": 1500.0, "518880": 1500.0},
+    amounts={"513100": 2000.0, "512890": 2000.0, "159985": 2000.0,
+             "159819": 2000.0, "518880": 2000.0},
     graded={"159819", "518880"},                       # S3 分档标的
     rotate_groups=[(["513100", "512890"], 0.30), (["159819", "518880"], 0.15)],
     premium_gate={"513100": 8.0},
@@ -192,6 +193,7 @@ DEFAULT_CFG = dict(
     amounts=None,            # {code: 月预算}; None=V31_CONFIG
     graded=None,             # S3 分档标的集合
     rotate_groups=None,      # [([c1,c2], pct), ...]
+    rot_threshold=5,         # 轮动触发分差阈值 (>= 触发)
     premium_gate=None,       # {code: 溢价阈值%}
     freq="month",            # month | biweek | quarter
     cross=False,             # 跨区块轮动 (全局10%)
@@ -338,6 +340,10 @@ def simulate(idx, data, is_first, is_biweek=None, is_quarter=None, cfg=None):
                     if cfg["gate_mode"] == "defl" and np.isfinite(prem_v) and prem_v > 0:
                         # 乐观界: 按 NAV 等效价 (价格/(1+溢价)) 买入, 后续按市价估值
                         buy(c, budget, dt, p / (1 + prem_v / 100), "defl", f"月定投·折价(溢价闸门{prem_v:+.1f}%)")
+                    elif cfg["gate_mode"] == "redirect" and cfg.get("gate_redirect_to"):
+                        # 提案实验(2026-08-21): 闸门预算改道买入同区块替代标的, 消除 skip 的现金拖累
+                        alt = cfg["gate_redirect_to"]
+                        buy(alt, budget, dt, data[alt]["p"].loc[dt], "场内", f"月定投·改道({c}溢价{prem_v:+.1f}%)")
                     # skip: 当月预算留现金池, 由后续月份/轮动使用 (保守界)
                 else:
                     buy(c, budget, dt, p, "场内", "月定投")
@@ -380,7 +386,7 @@ def simulate(idx, data, is_first, is_biweek=None, is_quarter=None, cfg=None):
                     if len(s) < 2:
                         continue
                     c1, c2 = list(s.keys())[:2]
-                    if abs(s[c1] - s[c2]) < 5:
+                    if abs(s[c1] - s[c2]) < cfg["rot_threshold"]:
                         continue
                     loser = c1 if s[c1] < s[c2] else c2
                     winner = c2 if loser == c1 else c1
