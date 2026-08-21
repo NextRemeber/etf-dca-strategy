@@ -207,6 +207,9 @@ DEFAULT_CFG = dict(
     gate_mode="skip",        # 溢价闸门: "skip"=当月预算留现金池(保守界) | "defl"=按溢价折价买入(乐观界)
                              # 注: nav 序列与 premium 序列口径不一致且未含分红, 场外净值直建不可靠,
                              #     故用 [skip, defl] 双界定闸门效应区间 (2026-08-21 实证)
+    iso_cash=False,          # 独立现金池 (2026-08-21 研究): 每月预算进各自标的账户, 分档少投的钱
+                             #   留本账户吃货基, 轮动(存量)用独立组合现金 — 模拟实盘"每只独立不挪用"
+                             #   ⚠️ 研究模式, 不经过三账审计 (audit_conservation 仅支持共享池)
 )
 
 
@@ -237,6 +240,9 @@ def simulate(idx, data, is_first, is_biweek=None, is_quarter=None, cfg=None):
     inject = float(sum(cfg["amounts"].values()))
 
     cash = 0.0
+    iso = cfg["iso_cash"]
+    acct_cash = {c: 0.0 for c in codes} if iso else None
+    rot_cash = 0.0 if iso else None          # iso: 轮动(存量)资金池
     shares = {c: 0.0 for c in codes}
     otc_shares = {c: 0.0 for c in codes}   # 场外份额 (按净值估值)
     trades = []      # 逐笔日志
@@ -244,11 +250,25 @@ def simulate(idx, data, is_first, is_biweek=None, is_quarter=None, cfg=None):
     total_in = 0.0
     total_fee = 0.0
 
-    def buy(code, budget, dt, price, channel, reason):
-        nonlocal cash, total_fee
+    def avail_of(code, acct):
+        if not iso:
+            return cash
+        return acct_cash[code] if acct == "own" else rot_cash
+
+    def spend(code, amt, acct):
+        nonlocal cash, rot_cash
+        if not iso:
+            cash -= amt
+        elif acct == "own":
+            acct_cash[code] -= amt
+        else:
+            rot_cash -= amt
+
+    def buy(code, budget, dt, price, channel, reason, acct="own"):
+        nonlocal total_fee
         if budget <= 0 or price <= 0 or not np.isfinite(price):
             return
-        budget = min(budget, max(cash, 0.0))          # 不透支
+        budget = min(budget, max(avail_of(code, acct), 0.0))   # 不透支
         if budget <= 0:
             return
         fee = _fee(budget, cfg["buy_cost"], cfg["min_fee"])
@@ -257,19 +277,22 @@ def simulate(idx, data, is_first, is_biweek=None, is_quarter=None, cfg=None):
             otc_shares[code] += sh
         else:
             shares[code] += sh
-        cash -= budget
+        spend(code, budget, acct)
         total_fee += fee
         trades.append(dict(date=dt, action="BUY", code=code, price=float(price),
                            gross=budget, fee=fee, shares_delta=sh, channel=channel, reason=reason))
 
     def sell(code, value, dt, price, reason):
         """卖出市值 value 的份额, 成本从现金侧扣 (正确口径)"""
-        nonlocal cash, total_fee
+        nonlocal cash, rot_cash, total_fee
         if value <= 0 or price <= 0:
             return
         fee = _fee(value, cfg["sell_cost"], cfg["min_fee"])
         shares[code] -= value / price
-        cash += value - fee
+        if iso:
+            rot_cash += value - fee          # iso: 卖出资金进轮动池 (存量操作)
+        else:
+            cash += value - fee
         total_fee += fee
         trades.append(dict(date=dt, action="SELL", code=code, price=float(price),
                            gross=value, fee=fee, shares_delta=-value / price, channel="场内", reason=reason))
@@ -312,7 +335,11 @@ def simulate(idx, data, is_first, is_biweek=None, is_quarter=None, cfg=None):
     for i, dt in enumerate(idx):
         # 现金注入: 固定每月首个交易日, 与动作频率独立 (rules 硬性口径)
         if is_first[i]:
-            cash += inject
+            if iso:
+                for c in codes:
+                    acct_cash[c] += cfg["amounts"][c]
+            else:
+                cash += inject
             total_in += inject
 
         act = False
@@ -376,7 +403,9 @@ def simulate(idx, data, is_first, is_biweek=None, is_quarter=None, cfg=None):
                     sell_v = min(abs(diff_b), shares[src] * ps)
                     if sell_v > 100:
                         sell(src, sell_v, dt, ps, "目标权重再平衡")
-                        buy(dst, min(sell_v * (1 - cfg["sell_cost"]), max(cash, 0.0)), dt, pd_, "场内", "目标权重再平衡")
+                        buy(dst, min(sell_v * (1 - cfg["sell_cost"]),
+                                     max(avail_of(dst, "rot") if iso else cash, 0.0)),
+                            dt, pd_, "场内", "目标权重再平衡", acct="rot")
             elif cfg["rotate_groups"]:
                 groups = cfg["rotate_groups"]
                 if cfg["cross"]:
@@ -398,12 +427,20 @@ def simulate(idx, data, is_first, is_biweek=None, is_quarter=None, cfg=None):
                         if gated(winner, dt):
                             # 闸门: 调入纳指方向跳过 (现金留存, 与 final_strategy 口径一致)
                             continue
-                        buy(winner, min(mv_l * pct_eff * (1 - cfg["sell_cost"]), max(cash, 0.0)),
-                            dt, pw, "场内", f"轮动调入(分差{abs(s[c1]-s[c2]):.0f})")
+                        buy(winner, min(mv_l * pct_eff * (1 - cfg["sell_cost"]),
+                                        max(avail_of(winner, "rot") if iso else cash, 0.0)),
+                            dt, pw, "场内", f"轮动调入(分差{abs(s[c1]-s[c2]):.0f})", acct="rot")
 
-        cash *= (1 + cfg["cash_rate"] / 252)
-        nav = cash + mv(dt)
-        daily.append(dict(date=dt, cash=cash, nav=nav,
+        if iso:
+            for c in codes:
+                acct_cash[c] *= (1 + cfg["cash_rate"] / 252)
+            rot_cash *= (1 + cfg["cash_rate"] / 252)
+            cash_tot = rot_cash + sum(acct_cash.values())
+        else:
+            cash *= (1 + cfg["cash_rate"] / 252)
+            cash_tot = cash
+        nav = cash_tot + mv(dt)
+        daily.append(dict(date=dt, cash=cash_tot, nav=nav,
                           **{f"sh_{c}": shares[c] for c in codes},
                           **{f"otc_{c}": otc_shares[c] for c in codes if otc_shares[c] != 0.0},
                           fee_cum=total_fee, in_cum=total_in))
