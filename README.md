@@ -1,6 +1,6 @@
 # ETF 定投量化策略 — 统一主仓库
 
-![License](https://img.shields.io/badge/License-MIT-blue) ![Python](https://img.shields.io/badge/Python-3.8+-green) ![Status](https://img.shields.io/badge/Status-v3.1定稿-brightgreen)
+![License](https://img.shields.io/badge/License-MIT-blue) ![Python](https://img.shields.io/badge/Python-3.8+-green) ![Status](https://img.shields.io/badge/Status-v3.3定稿-brightgreen)
 
 > A股 ETF 月度定投 + 分数分档 + 再平衡轮动的完整量化体系。
 > 生产脚本 / 回测引擎 / 研究记录 / 数据缓存 / 领域规则 统一管理。
@@ -56,7 +56,7 @@ etf-quant/
 │   ├── 01-策略体系.md
 │   ├── 02-验证报告.md           # 含 2026-08-21 修正后复验章节（权威数字）
 │   ├── 03-执行手册.md
-│   └── 04-最终方案-v3.1.md      # 含 v3.1.1 修正说明
+│   └── 04-最终方案-v3.3.md      # 去溢价闸门 + 豆粕维持1x
 └── README.md
 ```
 
@@ -76,7 +76,7 @@ C:/Anaconda3/python research/engine/engine_audit.py
 ## 核心结论速查（2026-08-21 引擎修正后口径，详见 docs/02 修正章节）
 
 - 旧4池：纯定投 17.2%/1.85 → 轮动 20.8%/2.52（**轮动增益 +3.6pp**）；子窗口 19.4%/2.17
-- v3.1 现行组合（含豆粕）：无闸门 18.5%/2.64；溢价闸门区间 15.6~16.9%（skip~defl 双界）
+- v3.3 现行组合（去闸门）：19.11%/-6.6%/2.91（2026-08-21 真实溢价数据定稿）
 - 合理年化预期 8-12% 不变（回测含 2025 特殊行情），样本外 Calmar 预期 ~1.7
 - 已证伪方向 16 项不变（防重复研究）；修正后动量对比差距更大（我方 2.51 vs 动量 1.02）
 - 引擎审计：三账守恒（现金账/份额账/财富守恒）+ 无未来函数 + bug 回归用例

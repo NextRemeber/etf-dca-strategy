@@ -10,7 +10,7 @@ ETF 定投策略日报 (经完整回测验证, 无未来函数)
 核心机制 (每月初执行三件事):
   1. 定投: 新钱按分数分档 (≥90→3x | ≥70→2x | ≥50→1x | <50→0.25x)
   2. 轮动: 分差≥5时从低分者调仓到高分者 (再平衡纪律, 随机对照100%超随机)
-  3. 闸门: 纳指溢价>8%改场外申购 (实证: >8%买入后60日-4.1%, 8%=收益转负边界)
+  3. (v3.3) 已移除溢价闸门: 2026-08-21 真实数据重验——溢价影响~0.4pp仅保险价值, 去闸门 IRR +0.37pp/Calmar 2.87→2.91
   无止盈点: 轮动即渐进式高位减持 (止盈与轮动冲突, 验证2.55→2.26)
 
 核心验证结论 (经引擎审计 + 完整回测确认):
@@ -23,8 +23,8 @@ ETF 定投策略日报 (经完整回测验证, 无未来函数)
   5. 打分有用但有限: 同投入资金额效率+8.1%(低位多投), 但资金闲置拖累总资产
   6. 最优模式 S3: 周期分档 90/70/50/<50 → 3x/2x/1x/0.25x (不空仓, 低档0.25x经全参数寻优确认)
 
-纳指溢价闸门 (QDII套利保护, 独立于策略):
-  纳指QDII溢价>8%暂停场内改场外(防止买入时已透支未来收益)
+溢价闸门已移除 (v3.3): 2026-08-21 真实溢价数据重验——闸门成本~0.4pp仅换崩塌保护,
+  且 premium 缓存曾污染 (2025年30%溢价为假数据); 溢价保留在日报中作信息展示, 不触发动作
 
 用法: python final_strategy.py [--monthly-budget 3000]
 """
@@ -463,22 +463,8 @@ def main():
         nw = ETF_POOL.get(winner, (SLOW_POOL.get(winner, winner), ""))[0]
         nl = ETF_POOL.get(loser, (SLOW_POOL.get(loser, loser), ""))[0]
         pct_txt = f"{int(rot_pct*100)}%"
-        # 纳指溢价闸门: 溢价>8% 时跳过买入纳指方向的调仓
-        skipped = False
-        if winner in SLOW_QDII:
-            try:
-                p_w = get_realtime_price(winner) or 0
-                prem = get_premium(winner, p_w) if p_w else None
-                if prem and prem['premium'] > 8:
-                    skipped = True
-            except Exception:
-                pass
-        if skipped:
-            rot_tag[loser] = f"调出暂停(对手溢价>8%)"
-            rot_tag[winner] = f"调入暂停(溢价>8%)"
-        else:
-            rot_tag[loser] = f"🔻调出{pct_txt}→{nw}"
-            rot_tag[winner] = f"🔺调入{pct_txt}←{nl}"
+        rot_tag[loser] = f"🔻调出{pct_txt}→{nw}"
+        rot_tag[winner] = f"🔺调入{pct_txt}←{nl}"
 
     # 批量取实时行情 (涨跌列, 单次请求)
     rt_map = batch_realtime([r[0] for r in current_scores])
@@ -622,19 +608,15 @@ def main():
 
     slow_total = 0
     slow_rows = []
-    redirect_total = 0.0   # 被闸(纳指)预算, 改道红利低波 (redirect 模式)
     for code, name in SLOW_POOL.items():
         s = load_qfq(code)
         if s is None: continue
         price = get_realtime_price(code) or s.iloc[-1]
 
-        # 基本配置 = 纯定投 1x, QDII溢价>8%时暂停场内改场外
+        # 基本配置 = 纯定投 1x (2026-08-21 v3.3: 移除溢价闸门——验证: 闸门成本~0.4pp仅换崩塌保护,
+        #   且 redirect 已消除现金拖累, 去闸门 IRR +0.37pp/Calmar 2.87→2.91; 溢价仅作信息展示)
         mult = 1.0
         level = "🟢 正常定投"
-
-        # QDII溢价闸门 (纳指) - 这是套利保护, 不是择时
-        # redirect模式 (2026-08-21 评审采纳): 被闸预算当月改买红利低波 (同区块, 不付溢价, 钱不趴货基)
-        #   三窗口验证: IRR 全面略优(+0.3~1.1pp), Calmar 全窗 2.82→2.90
         prem_str = ""
         if code in SLOW_QDII:
             try:
@@ -643,20 +625,10 @@ def main():
                     prem_str = f"{prem['premium']:+.1f}%"
                     if prem.get("stale"):
                         prem_str += "⚠️净值陈旧"
-                    if prem['premium'] > 8:
-                        mult = 0.0
-                        level = f"🚫 溢价{prem['premium']:+.1f}%>8%改道红利低波"
             except Exception:
                 pass
 
-        amt = (basic_budget / len(SLOW_POOL)) * mult
-        # redirect: 被闸(纳指)预算改道红利低波 — 三窗口 IRR 全面略优(+0.3~1.1pp)
-        if mult == 0.0 and "512890" in SLOW_POOL:
-            redirect_total += basic_budget / len(SLOW_POOL)
-        elif code == "512890" and redirect_total > 0:
-            amt += redirect_total
-            level = f"🟢 正常定投+改道{redirect_total:.0f}元"
-            redirect_total = 0.0
+        amt = basic_budget / len(SLOW_POOL)
         slow_total += amt
         chg_str = ""
         if HAS_ENHANCED:
@@ -709,22 +681,12 @@ def main():
             winner = c2 if loser == c1 else c1
             nl = ETF_POOL.get(loser, (SLOW_POOL.get(loser, loser), ""))[0]
             nw = ETF_POOL.get(winner, (SLOW_POOL.get(winner, winner), ""))[0]
-            # 纳指溢价闸门: 溢价>8% 时跳过买入纳指方向的调仓
-            prem_gate = ""
-            if winner == "513100" or (winner in SLOW_QDII):
-                try:
-                    p_w = get_realtime_price(winner) or 0
-                    prem = get_premium(winner, p_w) if p_w else None
-                    if prem and prem['premium'] > 8:
-                        prem_gate = f" ⚠️ 跳过买入{winner}(溢价{prem['premium']:+.1f}%>8%)"
-                except Exception:
-                    pass
             print(f"   {block_label}: {nl} {valid[loser]:.0f}分(高位) → {nw} {valid[winner]:.0f}分(低位) | "
-                  f"分差{diff:.0f}分≥5 → 调出{nl}持仓的{int(rot_pct*100)}%买入{nw}{prem_gate}")
+                  f"分差{diff:.0f}分≥5 → 调出{nl}持仓的{int(rot_pct*100)}%买入{nw}")
         else:
             print(f"   {block_label}: {n1} {valid[c1]:.0f}分 vs {n2} {valid[c2]:.0f}分 | "
                   f"分差{diff:.0f}分<5 → 本月不调仓(方向噪声)")
-    print(f"   注: ① 无条件再平衡最优(触发条件损失溢价) ② 纳指溢价>8%时跳过买入纳指方向")
+    print(f"   注: 无条件再平衡最优(触发条件损失溢价)")
 
     # ============ 今日推荐汇总 ============
     print(f"\n{_hdr('今日推荐汇总 (V0策略)', icon='📌')}")
@@ -732,7 +694,7 @@ def main():
         [("资产块", 10), ("标的", 18), ("投入", 8), ("说明", 30)],
         [
             ["周期卫星", "AI / 黄金", f"{total:.0f}元", "分档: 低位多投(3x/2x), 高位减半(0.25x)"],
-            ["基本配置", "纳指 / 红利低波 / 豆粕", f"{slow_total:.0f}元", "等额定投, 豆粕不轮动, 纳指溢价>8%暂停"],
+            ["基本配置", "纳指 / 红利低波 / 豆粕", f"{slow_total:.0f}元", "等额定投, 豆粕不轮动 (v3.3 去溢价闸门)"],
             ["合计", "5 标的", f"{total + slow_total:.0f}元",
              f"月预算: 周期{args.monthly_budget:.0f}(30%) + 基本{basic_budget:.0f}(70%)"],
         ],
