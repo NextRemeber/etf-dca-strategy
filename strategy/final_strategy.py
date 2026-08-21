@@ -550,7 +550,8 @@ def main():
     print(f"       现金不足时按池余额可投额执行, 不动用未来预算")
 
     # 池内状态评估: 分数每日更新, 池子固定不换标
-    print(f"\n{_hdr('池内状态评估 (分数每日更新, 池子固定)', icon='🔄')}")
+    # 周期池(⭐): 分数驱动分档定投 | 基本配置(◆): 1x 纯定投, 分数仅展示 (v3.3: 豆粕保险不加档)
+    print(f"\n{_hdr('池内状态评估 (5只池内标的, 分数每日更新)', icon='🔄')}")
     for code in pool:
         name, cat = ETF_POOL[code]
         s = load_qfq(code)
@@ -560,13 +561,28 @@ def main():
         cur = scores.iloc[-1]
         if np.isnan(cur): continue
         if cur >= 90:
-            print(f"   {_pad(name, 8)}: 🔥 深度低位({cur:.0f}分) → 黄金坑, 按3倍重仓")
+            print(f"   ⭐ {_pad(name, 8)}: 🔥 深度低位({cur:.0f}分) → 黄金坑, 按3倍重仓")
         elif cur < 30:
-            print(f"   {_pad(name, 8)}: 🟡 高位({cur:.0f}分) → 减投(0.25x), 避免追高")
+            print(f"   ⭐ {_pad(name, 8)}: 🟡 高位({cur:.0f}分) → 减投(0.25x), 避免追高")
         elif cur < 50:
-            print(f"   {_pad(name, 8)}: 🟡 偏高({cur:.0f}分) → 减投(0.25x)")
+            print(f"   ⭐ {_pad(name, 8)}: 🟡 偏高({cur:.0f}分) → 减投(0.25x)")
         else:
-            print(f"   {_pad(name, 8)}: ✅ 位置合理({cur:.0f}分) → 按规则投入")
+            print(f"   ⭐ {_pad(name, 8)}: ✅ 位置合理({cur:.0f}分) → 按规则投入")
+    for code, name in SLOW_POOL.items():
+        s = load_qfq(code)
+        if s is None: continue
+        scores = compute_score_series(s).dropna()
+        if len(scores) == 0: continue
+        cur = scores.iloc[-1]
+        if np.isnan(cur): continue
+        if cur < 30:
+            print(f"   ◆ {_pad(name, 8)}: 🟡 高位({cur:.0f}分) → 1x 纯定投(分数仅展示, 不加减仓)")
+        elif cur < 50:
+            print(f"   ◆ {_pad(name, 8)}: 🟡 偏高({cur:.0f}分) → 1x 纯定投(分数仅展示, 不加减仓)")
+        elif cur >= 70:
+            print(f"   ◆ {_pad(name, 8)}: 🟢 低位({cur:.0f}分) → 1x 纯定投(分数仅展示, 不加减仓)")
+        else:
+            print(f"   ◆ {_pad(name, 8)}: ✅ 位置合理({cur:.0f}分) → 1x 纯定投(分数仅展示)")
 
     # ============ 强势度数据已整合进上方"全部ETF打分总表" ============
     # 验证结论: 强势赛道是唯一alpha来源, bull_align(MA20>MA60>MA250成立占比)
