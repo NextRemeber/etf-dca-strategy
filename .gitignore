@@ -1,0 +1,15 @@
+# 数据缓存 (可由 fetch_ohlcv.py 重建, 如需入库移除下行注释)
+# data/ic_cache/*.pkl
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 输出
+output/
+*.log
