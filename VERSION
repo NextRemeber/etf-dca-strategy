@@ -1,6 +1,6 @@
-version: 3.3.0
+version: 3.4.0
 date: 2026-08-25
-status: 定稿 (v3.3: 去溢价闸门 + 豆粕维持1x)
+status: 定稿 (v3.4: 红利低波换 563020 低费率同指数标的)
 branch: main
 repo: NextRemeber/etf-dca-strategy
 
