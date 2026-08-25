@@ -712,7 +712,7 @@ def main():
             ["周期卫星", "AI / 黄金", f"{total:.0f}元", "分档: 低位多投(3x/2x), 高位减半(0.25x)"],
             ["基本配置", "纳指 / 红利低波 / 豆粕", f"{slow_total:.0f}元", "等额定投, 豆粕不轮动 (v3.3 去溢价闸门)"],
             ["合计", "5 标的", f"{total + slow_total:.0f}元",
-             f"月预算: 周期{args.monthly_budget:.0f}(30%) + 基本{basic_budget:.0f}(70%)"],
+             f"月预算: 周期{args.monthly_budget:.0f}(40%) + 基本{basic_budget:.0f}(60%)"],
         ],
         aligns=['l', 'l', 'r', 'l'],
     ))
