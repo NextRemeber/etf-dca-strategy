@@ -1,0 +1,11 @@
+version: 3.3.0
+date: 2026-08-25
+status: 定稿 (v3.3: 去溢价闸门 + 豆粕维持1x)
+branch: main
+repo: NextRemeber/etf-dca-strategy
+
+# 变更规则:
+# - 策略规则/组合结构变更 → 升 minor (3.3 → 3.4)
+# - 数据/引擎修复/文档 → 升 patch (3.3.0 → 3.3.1)
+# - 重大重构或推翻性结论 → 升 major (3 → 4)
+# 每次升版本必须同步更新 CHANGELOG.md 和 docs/04-最终方案-vX.Y.md
