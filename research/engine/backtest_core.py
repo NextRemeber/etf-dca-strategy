@@ -386,7 +386,11 @@ def simulate(idx, data, is_first, is_biweek=None, is_quarter=None, cfg=None):
                     else:
                         continue          # 规则口径: 数据不足跳过
                 else:
-                    mult = 3.0 if sc >= 90 else 2.0 if sc >= 70 else 1.0 if sc >= 50 else 0.25
+                    mult_fn = cfg.get("s3_mult_fn")   # 研究变体: 自定义分档倍数 (2026-09-01)
+                    if mult_fn is not None:
+                        mult = mult_fn(sc)
+                    else:
+                        mult = 3.0 if sc >= 90 else 2.0 if sc >= 70 else 1.0 if sc >= 50 else 0.25
                 buy(c, cfg["amounts"][c] * buy_mult * mult, dt, p, "场内", f"月定投·S3({mult}x)")
 
             # --- 轮动 / 目标权重 ---
