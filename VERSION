@@ -1,6 +1,6 @@
-version: 3.5.0
+version: 3.5.1
 date: 2026-08-25
-status: 定稿 (v3.5: 基本块定投即轮动A1, 执行层合并无策略变更)
+status: 定稿 (v3.5.1: 基本块A1 + 周期块轮动比例15%→25%)
 branch: main
 repo: NextRemeber/etf-dca-strategy
 
