@@ -211,6 +211,8 @@ DEFAULT_CFG = dict(
     iso_cash=False,          # 独立现金池 (2026-08-21 研究): 每月预算进各自标的账户, 分档少投的钱
                              #   留本账户吃货基, 轮动(存量)用独立组合现金 — 模拟实盘"每只独立不挪用"
                              #   ⚠️ 研究模式, 不经过三账审计 (audit_conservation 仅支持共享池)
+    dca_rotate=False,        # 定投即轮动 (2026-10-24 研究): 有轮动信号时, loser 的新钱预算转给 winner
+                             #   (一步到位: loser 只卖不买, winner 得到全部新钱+卖出资金; 避免买了又卖)
 )
 
 
@@ -352,10 +354,32 @@ def simulate(idx, data, is_first, is_biweek=None, is_quarter=None, cfg=None):
             act = True
 
         if act:
+            # 定投即轮动 (A1): 先确定当月各轮动组方向, loser 新钱预算转给 winner
+            # dca_rotate: True=全组 | "basic"=仅含513100的基本块 | "cycle"=仅周期块(AI/黄金)
+            dca_rot_map = {}
+            if cfg["dca_rotate"]:
+                for grp, _pct in (cfg["rotate_groups"] or []):
+                    if cfg["dca_rotate"] == "basic" and "513100" not in grp: continue
+                    if cfg["dca_rotate"] == "cycle" and "513100" in grp: continue
+                    if len(grp) < 2: continue
+                    s = {c: data[c]["s"].loc[dt] for c in grp if not np.isnan(data[c]["s"].loc[dt])}
+                    if len(s) < 2: continue
+                    c1, c2 = list(s.keys())[:2]
+                    if abs(s[c1] - s[c2]) < cfg["rot_threshold"]: continue
+                    _loser = c1 if s[c1] < s[c2] else c2
+                    _winner = c2 if _loser == c1 else c1
+                    dca_rot_map[_loser] = _winner
+
             # --- 定投: 纯定投标的 1x (dyn_w 时前两只按分数动态分权, 已证伪仅留复现) ---
             for c in base_pair:
                 p = data[c]["p"].loc[dt]
                 budget = cfg["amounts"][c] * buy_mult
+                if dca_rot_map:
+                    if c in dca_rot_map:
+                        budget = 0.0                       # loser 不投新钱 (只卖不买)
+                    elif c in dca_rot_map.values():
+                        # winner 得到 loser 的新钱预算 (一步到位)
+                        budget += sum(cfg["amounts"][l] * buy_mult for l, w in dca_rot_map.items() if w == c)
                 if dyn_pair and c in dyn_pair:
                     other = dyn_pair[0] if c == dyn_pair[1] else dyn_pair[1]
                     s1 = data[c]["s"].loc[dt]
@@ -391,7 +415,13 @@ def simulate(idx, data, is_first, is_biweek=None, is_quarter=None, cfg=None):
                         mult = mult_fn(sc)
                     else:
                         mult = 3.0 if sc >= 90 else 2.0 if sc >= 70 else 1.0 if sc >= 50 else 0.25
-                buy(c, cfg["amounts"][c] * buy_mult * mult, dt, p, "场内", f"月定投·S3({mult}x)")
+                budget = cfg["amounts"][c] * buy_mult * mult
+                if dca_rot_map:
+                    if c in dca_rot_map:
+                        budget = 0.0
+                    elif c in dca_rot_map.values():
+                        budget += sum(cfg["amounts"][l] * buy_mult * mult for l, w in dca_rot_map.items() if w == c)
+                buy(c, budget, dt, p, "场内", f"月定投·S3({mult}x)")
 
             # --- 轮动 / 目标权重 ---
             if cfg["target_w"]:

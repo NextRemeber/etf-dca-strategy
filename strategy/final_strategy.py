@@ -4,7 +4,7 @@ ETF 定投策略日报 (经完整回测验证, 无未来函数)
 =============================================
 
 投资组合 (2026-08-14 终版, 全部经双周期验证):
-  基本配置 70%: 纳指(513100) / 红利低波(512890) → 等额定投 + 分数轮动(每月30%, 分差≥5)
+  基本配置 60%: 纳指(513100) / 红利低波(563020) → 等额定投 + 分数轮动(每月30%, 分差≥5)
   周期卫星 30%: AI(159819) / 黄金(518880) → 分档投入 + 分数轮动(每月15%, 分差≥5)
 
 核心机制 (每月初执行三件事):
@@ -92,11 +92,11 @@ FIXED_POOL = ["159819", "518880"]  # AI + 黄金 (周期卫星, 分档)
 #    合理年化收益预期 8-12%, 最大回撤可能 -30%, 最长套牢 2-3 年
 SLOW_POOL = {
     "513100": "纳指",
-    "512890": "红利低波",
+    "563020": "红利低波",  # 2026-08-25 v3.4: 512890→563020 (费率0.60%→0.20%/年, 同指数)
     "159985": "豆粕",
 }
 # 基本配置中参与月度轮动的配对 (豆粕不参与: 低相关保险角色, 轮动无再平衡溢价)
-SLOW_ROTATE_PAIRS = ["513100", "512890"]
+SLOW_ROTATE_PAIRS = ["513100", "563020"]
 # 慢牛资产中的QDII (需溢价闸门)
 SLOW_QDII = {"513100"}  # 纳指
 
@@ -438,7 +438,7 @@ def main():
             advice = ""
         current_scores.append((code, name, cur, mean_val, lv, ba_str, trend, st, advice, role))
         # 决策日志: 收集核心5标的分数
-        if code in ("513100", "512890", "159985", "159819", "518880"):
+        if code in ("513100", "563020", "159985", "159819", "518880"):
             if "scores_5" not in locals():
                 scores_5 = {}
             scores_5[code] = float(cur)
@@ -622,6 +622,18 @@ def main():
     print(f"   策略: 每月等额定投, 不做BOLL调节 (豆粕=商品保险, 低相关0.104, 不参与轮动)")
     print(f"   验证: BOLL中轨调节对慢牛资产无超额收益, 纯定投最优; 豆粕加入三窗口 Calmar 全面提升\n")
 
+    # A1 (定投即轮动, v3.5): 基本块有轮动信号时, loser 不投新钱, 新钱全给 winner
+    # 效果: loser 只卖不买, winner 得到全部新钱+卖出资金, 避免"买了又卖"
+    # 回测: 与先投后调结果几乎一致(略好), Calmar 2.56→2.59, 各窗口全胜 (阶段二十一)
+    basic_rot_loser = None
+    basic_rot_winner = None
+    _valid = {c: sc for c, _, sc, *_ in current_scores if c in SLOW_ROTATE_PAIRS and not np.isnan(sc)}
+    if len(_valid) == 2:
+        _c1, _c2 = list(_valid.keys())[:2]
+        if abs(_valid[_c1] - _valid[_c2]) >= 5:
+            basic_rot_loser = _c1 if _valid[_c1] < _valid[_c2] else _c2
+            basic_rot_winner = _c2 if basic_rot_loser == _c1 else _c1
+
     slow_total = 0
     slow_rows = []
     for code, name in SLOW_POOL.items():
@@ -644,7 +656,15 @@ def main():
             except Exception:
                 pass
 
-        amt = basic_budget / len(SLOW_POOL)
+        per = basic_budget / len(SLOW_POOL)
+        if basic_rot_loser and code == basic_rot_loser:
+            amt = 0.0
+            level = "🔻 调出(不投新钱)"
+        elif basic_rot_winner and code == basic_rot_winner:
+            amt = per * 2
+            level = "🟢 正常定投(含loser新钱)"
+        else:
+            amt = per
         slow_total += amt
         chg_str = ""
         if HAS_ENHANCED:
@@ -738,7 +758,7 @@ def main():
         jrow = {
             "date": _dt.now().strftime("%Y-%m-%d"),
             "naz_s": f"{scores_5.get('513100', ''):.0f}" if isinstance(scores_5.get('513100'), float) else "",
-            "hld_s": f"{scores_5.get('512890', ''):.0f}" if isinstance(scores_5.get('512890'), float) else "",
+            "hld_s": f"{scores_5.get('563020', ''):.0f}" if isinstance(scores_5.get('563020'), float) else "",
             "dou_s": f"{scores_5.get('159985', ''):.0f}" if isinstance(scores_5.get('159985'), float) else "",
             "ai_s": f"{scores_5.get('159819', ''):.0f}" if isinstance(scores_5.get('159819'), float) else "",
             "gold_s": f"{scores_5.get('518880', ''):.0f}" if isinstance(scores_5.get('518880'), float) else "",
