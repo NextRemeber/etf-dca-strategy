@@ -684,7 +684,7 @@ def main():
         slow_rows,
         aligns=['l', 'l', 'r', 'l', 'r', 'r', 'l', 'r'],
     ))
-    print(f"\n   规则: 等额定投 (v3.3 已移除溢价闸门, 溢价仅展示不触发动作)")
+    print(f"   规则: 基本块A1定投即轮动 (loser不投新钱, winner承接其预算) | 周期块先投后调 | 溢价仅展示不触发动作")
 
     # ============ 分数轮动指令 (再平衡纪律, 非择时) ============
     # 验证: 分差>=5触发, 基本配置30%/周期卫星25%, 全窗Calmar 2.56→2.63 (2026-10-24)
@@ -718,7 +718,8 @@ def main():
             nl = ETF_POOL.get(loser, (SLOW_POOL.get(loser, loser), ""))[0]
             nw = ETF_POOL.get(winner, (SLOW_POOL.get(winner, winner), ""))[0]
             print(f"   {block_label}: {nl} {valid[loser]:.0f}分(高位) → {nw} {valid[winner]:.0f}分(低位) | "
-                  f"分差{diff:.0f}分≥5 → 调出{nl}持仓的{int(rot_pct*100)}%买入{nw}")
+                  f"分差{diff:.0f}分≥5 → 调出{nl}持仓的{int(rot_pct*100)}%买入{nw} | "
+                  f"{'基本块A1: 新钱不投'+nl+'，'+nw+'承接' if block_label == '基本配置' else '周期块: 先定投后调仓'}")
         else:
             print(f"   {block_label}: {n1} {valid[c1]:.0f}分 vs {n2} {valid[c2]:.0f}分 | "
                   f"分差{diff:.0f}分<5 → 本月不调仓(方向噪声)")
