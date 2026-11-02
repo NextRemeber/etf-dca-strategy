@@ -23,9 +23,11 @@ def _esc(s):
 
 
 def _is_rule(line):
-    """分隔线: 去掉所有空白后只剩 ─ 或 ="""
+    """分隔线: 去掉所有空白后只剩 ─ / ═ / = 等制表符"""
     s = "".join(line.split())
-    return len(s) >= 6 and (set(s) <= set("─") or set(s) <= set("="))
+    if len(s) < 6:
+        return False
+    return set(s) <= set("─═=━-")
 
 
 def _split_row(line):
@@ -47,12 +49,13 @@ def _pos_chip(cell):
 
 
 def _chg_span(cell):
-    """涨跌列: A股习惯 红涨绿跌"""
+    """涨跌列: A股习惯 红涨绿跌; emoji 换成 ▲▼ 避免无字体环境变方块"""
+    txt = cell.replace("📈", "▲").replace("📉", "▼")
     if cell.startswith("📈"):
-        return f'<span class="up">{_esc(cell)}</span>'
+        return f'<span class="up">{_esc(txt)}</span>'
     if cell.startswith("📉"):
-        return f'<span class="down">{_esc(cell)}</span>'
-    return _esc(cell)
+        return f'<span class="down">{_esc(txt)}</span>'
+    return _esc(txt)
 
 
 def _status_chip(cell):
@@ -63,6 +66,19 @@ def _status_chip(cell):
     if "🟢" in cell:
         return f'<span class="chip green">{_esc(cell)}</span>'
     return _esc(cell)
+
+
+_NUM_HEADS = ("分值", "均值", "vs均值", "强势", "倍数", "现价", "金额")
+# 窄屏隐藏的次要列 (决策不需要: 代码/信号/现价/溢价/统计列/选中标记)
+_SEC_HEADS = ("代码", "信号", "现价", "溢价", "均值", "vs均值", "强势", "趋势", "选中", "分值条")
+
+
+def _sec_class(header):
+    return "sec-col" if any(k in header for k in _SEC_HEADS) else ""
+
+
+def _align_class(header):
+    return "num" if any(k in header for k in _NUM_HEADS) else ""
 
 
 def _styled_cell(header, cell):
@@ -88,15 +104,22 @@ def _styled_cell(header, cell):
 
 
 def _render_table(header_cells, rows):
-    th = "".join(f"<th>{_esc(h)}</th>" for h in header_cells)
+    # 丢弃"分值条"列: █░ 字符在多数无衬线字体下渲染成乱块, 信息由分值列承载
+    keep = [i for i, h in enumerate(header_cells) if "分值条" not in h]
+    hdr = [header_cells[i] for i in keep]
+    th = "".join(f'<th class="{_sec_class(h)}">{_esc(h)}</th>' for h in hdr)
     body = []
     for r in rows:
+        # 池内标的行加底色突出 (选中列含 ⭐/◆)
+        is_pool = any("⭐" in c or "◆" in c for c in r)
         tds = []
-        for i in range(len(header_cells)):
+        for i in keep:
             cell = r[i] if i < len(r) else ""
-            tds.append(f"<td>{_styled_cell(header_cells[i], cell)}</td>")
-        body.append("<tr>" + "".join(tds) + "</tr>")
-    return (f'<div class="tw"><table><thead><tr>{th}</tr></thead>'
+            cls = (_align_class(header_cells[i]) + " " + _sec_class(header_cells[i])).strip()
+            tds.append(f'<td class="{cls}">{_styled_cell(header_cells[i], cell)}</td>')
+        body.append(f'<tr class="{"pool" if is_pool else ""}">' + "".join(tds) + "</tr>")
+    wide = ' class="wide"' if len(hdr) >= 10 else ''
+    return (f'<div class="tw"><table{wide}><thead><tr>{th}</tr></thead>'
             f'<tbody>{"".join(body)}</tbody></table></div>')
 
 
@@ -231,20 +254,79 @@ tbody tr:hover { background:#232c44; }
 .chip.warn { background:rgba(255,140,60,.15); color:#ffab6e; border:1px solid rgba(255,140,60,.45); font-weight:700; }
 .chip.cycle { background:rgba(94,170,255,.14); color:#82bcff; border:1px solid rgba(94,170,255,.4); }
 .chip.basic { background:rgba(167,139,250,.14); color:#bda4ff; border:1px solid rgba(167,139,250,.4); }
-.note { font-size:12.5px; color:var(--muted); background:var(--bg2); border-left:3px solid #3b4a6b;
-        padding:8px 12px; border-radius:0 8px 8px 0; margin:8px 0; white-space:pre-wrap; line-height:1.7; }
+.notes { font-size:12.5px; color:var(--muted); background:var(--bg2);
+         border-left:3px solid #3b4a6b; padding:8px 12px; border-radius:0 8px 8px 0;
+         margin:8px 0; line-height:1.75; }
+.notes > div + div { margin-top:4px; }
+td.num, th.num { text-align:right; font-family:Consolas,monospace; }
+tr.pool td { background:rgba(94,170,255,.055); }
+tr.pool td:first-child { font-weight:700; }
 pre { font-size:12.5px; color:#b8c3da; background:var(--bg2); border:1px solid #232c44;
       padding:10px 12px; border-radius:8px; overflow-x:auto; margin:8px 0; white-space:pre-wrap;
       font-family:-apple-system,"Microsoft YaHei UI",Consolas,monospace; line-height:1.8; }
+.action { display:flex; flex-wrap:wrap; align-items:center; gap:14px 26px;
+           background:linear-gradient(135deg,#1b2942,#22304d); border:1px solid #2f4166;
+           border-radius:14px; padding:16px 22px; margin-bottom:20px; }
+.action .act-main { display:flex; align-items:baseline; gap:6px; }
+.action .act-main .k { font-size:12.5px; color:var(--muted); }
+.action .act-main .v { font-size:30px; font-weight:800; color:#7fc4ff;
+                       font-family:"JetBrains Mono",Consolas,monospace; letter-spacing:-1px; }
+.action .act-main .u { font-size:13px; color:var(--muted); }
+.action .act-sub { display:flex; gap:8px; flex-wrap:wrap; }
+.action .pill { font-size:12.5px; padding:3px 11px; border-radius:999px;
+                background:rgba(94,170,255,.1); color:#9ccaff; border:1px solid rgba(94,170,255,.28); }
+.action .pill.hot { background:rgba(255,107,107,.13); color:#ff9a9a; border-color:rgba(255,107,107,.4); font-weight:700; }
+.action .act-rot { font-size:12.5px; color:#c3cee4; width:100%; padding-top:4px;
+                   border-top:1px solid #2a3550; }
 .foot { text-align:center; color:var(--muted); font-size:12px; margin-top:24px; letter-spacing:.5px; }
+@media (max-width: 820px) {
+  .wrap { padding:16px 12px 40px; max-width:100%; overflow-x:hidden; }
+  .hero { padding:16px 18px; border-radius:12px; }
+  .hero h1 { font-size:16px; letter-spacing:0; }
+  .hero .sub { font-size:11.5px; }
+  .kpis { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+  .kpi { padding:10px 12px; }
+  .kpi .v { font-size:16px; }
+  .action { padding:12px 14px; gap:10px 14px; }
+  .action .act-main .v { font-size:24px; }
+  .action .pill { font-size:11.5px; padding:2px 9px; }
+  section { padding:14px 14px; border-radius:12px; }
+  section h2 { font-size:13.5px; }
+  table { font-size:11.5px; table-layout:auto; }
+  th, td { padding:6px 6px; white-space:normal; word-break:break-word; }
+  /* 窄屏只留决策列: 名称/分数/档位/倍数/金额/状态 */
+  .sec-col { display:none !important; }
+  .notes { font-size:11.5px; }
+}
+.tw { max-width:100%; }
 ::-webkit-scrollbar { height:8px; width:8px; }
 ::-webkit-scrollbar-thumb { background:#2e3852; border-radius:4px; }
 ::-webkit-scrollbar-track { background:transparent; }
 """
 
 
+# 分区优先级: 先"今天做什么"(可执行), 再看市场全景, 最后参考信息
+_ORDER = [
+    ("💰", 1), ("🏦", 2), ("🔄", 3),       # 执行区
+    ("📊", 4),                              # 市场全景 (42只明细)
+    ("📌", 5), ("📐", 6), ("💡", 7),        # 参考区
+]
+
+
+def _order_key(sec):
+    icon, title, _ = sec
+    for i, (ic, pri) in enumerate(_ORDER):
+        if icon == ic:
+            # 🔄 有两个(调仓指令/池内状态): 含"调仓"的优先
+            if ic == "🔄":
+                return (pri, 0 if "调仓" in title else 1, i)
+            return (pri, 0, i)
+    return (99, 0, 0)
+
+
 def render_html(text, date_str, extra_meta=""):
     indices, sections = _parse(text)
+    sections = sorted(sections, key=_order_key)
     out = [f'<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">'
            f'<meta name="viewport" content="width=device-width, initial-scale=1.0">'
            f'<title>ETF 定投策略日报 | {date_str}</title><style>{_CSS}</style></head><body><div class="wrap">']
@@ -257,6 +339,38 @@ def render_html(text, date_str, extra_meta=""):
             cards.append(f'<div class="kpi"><div class="k">{_esc(name)}</div>'
                          f'<div class="v">{_esc(px)}</div><div class="d {cls}">{_esc(chg)}</div></div>')
         out.append(f'<div class="kpis">{"".join(cards)}</div>')
+
+    # 今日行动摘要条: 合计投入 + 各块金额 + 调仓方向 (关键信息前置)
+    import re as _re
+    def _grab(pat):
+        m = _re.search(pat, text)
+        return m.group(1) if m else ""
+    total = _grab(r"合计\s+5 标的\s+(\d+)元")
+    cyc = _grab(r"周期卫星本月合计: (\d+)元")
+    basic = _grab(r"占预算60%=(\d+)元/月")
+    ai_amt = _grab(r"AI\s+\(159819\).*?(\d+)元")
+    gold_amt = _grab(r"黄金\s+\(518880\).*?(\d+)元")
+    rot = _grab(r"周期卫星: (.*)")
+    basic_rot = _grab(r"基本配置: 纳指 (\d+)分 vs 红利低波 (\d+)分")
+    chips = []
+    if total:
+        chips.append(f'<div class="act-main"><span class="k">今日合计投入</span>'
+                     f'<span class="v">{total}</span><span class="u">元</span></div>')
+    sub = []
+    if ai_amt:
+        sub.append(f'<span class="pill hot">AI {ai_amt}元</span>')
+    if gold_amt:
+        sub.append(f'<span class="pill">黄金 {gold_amt}元</span>')
+    if cyc:
+        sub.append(f'<span class="pill">周期 {cyc}元</span>')
+    if basic:
+        sub.append(f'<span class="pill">基本 {basic}元</span>')
+    if sub:
+        chips.append('<div class="act-sub">' + "".join(sub) + '</div>')
+    if rot:
+        chips.append(f'<div class="act-rot"><b>调仓</b> · {_esc(rot)}</div>')
+    if chips:
+        out.append('<div class="action">' + "".join(chips) + '</div>')
     for icon, title, items in sections:
         if not title and not items:
             continue
@@ -274,13 +388,20 @@ def render_html(text, date_str, extra_meta=""):
                     out.append(f'<pre>{_esc(it[1])}</pre>')
             continue
         out.append(f'<section><h2>{icon} {_esc(title)}</h2>')
-        for it in items:
+        i = 0
+        while i < len(items):
+            it = items[i]
             if it[0] == "table":
                 out.append(_render_table(it[1], it[2]))
-            elif it[0] == "note":
-                out.append(f'<div class="note">{_esc(it[1])}</div>')
+                i += 1
             else:
-                out.append(f'<pre>{_esc(it[1])}</pre>')
+                # 连续 note/pre 合并为一块说明区 (减少碎片化方框)
+                buf = []
+                while i < len(items) and items[i][0] != "table":
+                    buf.append(_esc(items[i][1]))
+                    i += 1
+                out.append('<div class="notes">' +
+                           "".join(f"<div>{b}</div>" for b in buf) + "</div>")
         out.append("</section>")
     out.append(f'<div class="foot">生成于 {_esc(date_str)} · 仅供研究参考, 不构成投资建议</div></div></body></html>')
     return "".join(out)
