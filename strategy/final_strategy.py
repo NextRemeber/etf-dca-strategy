@@ -800,24 +800,16 @@ if __name__ == "__main__":
     _ts = _dt.now().strftime("%Y%m%d_%H%M%S")
     _html_path = os.path.join(_report_dir, f"daily_report_{_ts}.html")
 
-    # HTML 报告: 标题 + 等宽 pre 保留原排版 + 中文字体 + 深色主题
-    _html = f"""<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ETF 定投策略日报 | {_dt.now().strftime('%Y-%m-%d')}</title>
-<style>
-  body {{ font-family: "Microsoft YaHei", "PingFang SC", monospace; background: #1e1e1e; color: #d4d4d4; padding: 24px; line-height: 1.5; }}
-  h1 {{ color: #4fc3f7; font-size: 20px; margin-bottom: 16px; }}
-  pre {{ white-space: pre-wrap; word-wrap: break-word; font-size: 13px; }}
-</style>
-</head>
-<body>
-<h1>📊 ETF 定投策略日报 | {_dt.now().strftime('%Y-%m-%d')}</h1>
-<pre>{_text}</pre>
-</body>
-</html>"""
+    # HTML 报告: 结构化仪表盘渲染 (v3.5.3: KPI卡片+分节卡片+着色表格)
+    try:
+        from html_report import render_html
+        _html = render_html(_text, _dt.now().strftime("%Y-%m-%d"))
+    except Exception as _e:
+        # 渲染器异常时回退到纯文本 pre (信息零丢失)
+        import html as _h
+        _html = (f'<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">'
+                 f'<title>ETF 定投策略日报</title></head><body><pre>'
+                 f'{_h.escape(_text)}</pre></body></html>')
     with open(_html_path, "w", encoding="utf-8") as f:
         f.write(_html)
 
