@@ -549,73 +549,6 @@ def main():
     print(f"   注: ≥2x/3x 加投从现金储备池扣 (引擎约束: 不透支, 需前期 0.25x 月积累),")
     print(f"       现金不足时按池余额可投额执行, 不动用未来预算")
 
-    # 池内状态评估: 分数每日更新, 池子固定不换标
-    # 周期池(⭐): 分数驱动分档定投 | 基本配置(◆): 1x 纯定投, 分数仅展示 (v3.3: 豆粕保险不加档)
-    print(f"\n{_hdr('池内状态评估 (5只池内标的, 分数每日更新)', icon='🔄')}")
-    for code in pool:
-        name, cat = ETF_POOL[code]
-        s = load_qfq(code)
-        if s is None: continue
-        scores = compute_score_series(s).dropna()
-        if len(scores) == 0: continue
-        cur = scores.iloc[-1]
-        if np.isnan(cur): continue
-        if cur >= 90:
-            print(f"   ⭐ {_pad(name, 8)}: 🔥 深度低位({cur:.0f}分) → 黄金坑, 按3倍重仓")
-        elif cur < 30:
-            print(f"   ⭐ {_pad(name, 8)}: 🟡 高位({cur:.0f}分) → 减投(0.25x), 避免追高")
-        elif cur < 50:
-            print(f"   ⭐ {_pad(name, 8)}: 🟡 偏高({cur:.0f}分) → 减投(0.25x)")
-        else:
-            print(f"   ⭐ {_pad(name, 8)}: ✅ 位置合理({cur:.0f}分) → 按规则投入")
-    for code, name in SLOW_POOL.items():
-        s = load_qfq(code)
-        if s is None: continue
-        scores = compute_score_series(s).dropna()
-        if len(scores) == 0: continue
-        cur = scores.iloc[-1]
-        if np.isnan(cur): continue
-        if cur < 30:
-            print(f"   ◆ {_pad(name, 8)}: 🟡 高位({cur:.0f}分) → 1x 纯定投(分数仅展示, 不加减仓)")
-        elif cur < 50:
-            print(f"   ◆ {_pad(name, 8)}: 🟡 偏高({cur:.0f}分) → 1x 纯定投(分数仅展示, 不加减仓)")
-        elif cur >= 70:
-            print(f"   ◆ {_pad(name, 8)}: 🟢 低位({cur:.0f}分) → 1x 纯定投(分数仅展示, 不加减仓)")
-        else:
-            print(f"   ◆ {_pad(name, 8)}: ✅ 位置合理({cur:.0f}分) → 1x 纯定投(分数仅展示)")
-
-    # ============ 强势度数据已整合进上方"全部ETF打分总表" ============
-    # 验证结论: 强势赛道是唯一alpha来源, bull_align(MA20>MA60>MA250成立占比)
-    # 是实证有效的强势识别因子(IC60+0.094/IC120+0.180/79%正占比, 前周期同样成立)
-    # 切换信号: 连续60日<0.2(持续空头) → 后250日超额-6pp(双周期验证); 但自动卖出
-    # 执行亏钱(IRR砍85%, 信号滞后+踏空深V反弹) → 为人工决策参考, 非自动信号
-
-    # 切换参考: 全池当前 bull_align 排序 (人工换标时的候选输入)
-    print(f"\n{_hdr('切换参考 (全池当前强势排序, 人工换标候选)', icon='🔁')}")
-    cands = []
-    for code, (name, cat) in ETF_POOL.items():
-        s = load_qfq(code)
-        if s is None or len(s) < 300: continue
-        ma20 = s.rolling(20).mean()
-        ma60 = s.rolling(60).mean()
-        ma250 = s.rolling(250).mean()
-        ba = ((ma20 > ma60) & (ma60 > ma250)).astype(float).rolling(60).mean()
-        cb = ba.iloc[-1]
-        if np.isnan(cb): continue
-        cands.append((name, code, cb))
-    cands.sort(key=lambda x: -x[2])
-    cand_rows = []
-    for name, code, cb in cands[:6]:
-        mark = "⭐" if code in pool else ""
-        in_pool = "池内" if code in pool else "候选"
-        cand_rows.append([name, f"({code})", f"{cb:.2f}", in_pool, mark])
-    print(_tbl(
-        [("标的", 8), ("代码", 8), ("bull_align", 10), ("池内/候选", 8), ("", 2)],
-        cand_rows,
-        aligns=['l', 'l', 'r', 'l', 'c'],
-    ))
-    print(f"   注: 机械换标已验证无效(43%≈随机), 此列表仅供人工年度审视时参考;")
-    print(f"       换标需综合判断(强势期+主题逻辑), 不因单日信号机械执行")
 
     # ============ 基本配置类资产 (纯定投, 已验证调节无效) ============
     print(f"\n{_hdr(f'基本配置资产 (纳指/红利低波/豆粕, 占预算60%={basic_budget:.0f}元/月) | 纯定投', icon='🏦')}")
@@ -735,6 +668,73 @@ def main():
             print(f"   {block_label}: {n1} {valid[c1]:.0f}分 vs {n2} {valid[c2]:.0f}分 | "
                   f"分差{diff:.0f}分<5 → 本月不调仓(方向噪声)")
     print(f"   注: 无条件再平衡最优(触发条件损失溢价)")
+    # 池内状态评估: 分数每日更新, 池子固定不换标
+    # 周期池(⭐): 分数驱动分档定投 | 基本配置(◆): 1x 纯定投, 分数仅展示 (v3.3: 豆粕保险不加档)
+    print(f"\n{_hdr('池内状态评估 (5只池内标的, 分数每日更新)', icon='🔄')}")
+    for code in pool:
+        name, cat = ETF_POOL[code]
+        s = load_qfq(code)
+        if s is None: continue
+        scores = compute_score_series(s).dropna()
+        if len(scores) == 0: continue
+        cur = scores.iloc[-1]
+        if np.isnan(cur): continue
+        if cur >= 90:
+            print(f"   ⭐ {_pad(name, 8)}: 🔥 深度低位({cur:.0f}分) → 黄金坑, 按3倍重仓")
+        elif cur < 30:
+            print(f"   ⭐ {_pad(name, 8)}: 🟡 高位({cur:.0f}分) → 减投(0.25x), 避免追高")
+        elif cur < 50:
+            print(f"   ⭐ {_pad(name, 8)}: 🟡 偏高({cur:.0f}分) → 减投(0.25x)")
+        else:
+            print(f"   ⭐ {_pad(name, 8)}: ✅ 位置合理({cur:.0f}分) → 按规则投入")
+    for code, name in SLOW_POOL.items():
+        s = load_qfq(code)
+        if s is None: continue
+        scores = compute_score_series(s).dropna()
+        if len(scores) == 0: continue
+        cur = scores.iloc[-1]
+        if np.isnan(cur): continue
+        if cur < 30:
+            print(f"   ◆ {_pad(name, 8)}: 🟡 高位({cur:.0f}分) → 1x 纯定投(分数仅展示, 不加减仓)")
+        elif cur < 50:
+            print(f"   ◆ {_pad(name, 8)}: 🟡 偏高({cur:.0f}分) → 1x 纯定投(分数仅展示, 不加减仓)")
+        elif cur >= 70:
+            print(f"   ◆ {_pad(name, 8)}: 🟢 低位({cur:.0f}分) → 1x 纯定投(分数仅展示, 不加减仓)")
+        else:
+            print(f"   ◆ {_pad(name, 8)}: ✅ 位置合理({cur:.0f}分) → 1x 纯定投(分数仅展示)")
+
+    # ============ 强势度数据已整合进上方"全部ETF打分总表" ============
+    # 验证结论: 强势赛道是唯一alpha来源, bull_align(MA20>MA60>MA250成立占比)
+    # 是实证有效的强势识别因子(IC60+0.094/IC120+0.180/79%正占比, 前周期同样成立)
+    # 切换信号: 连续60日<0.2(持续空头) → 后250日超额-6pp(双周期验证); 但自动卖出
+    # 执行亏钱(IRR砍85%, 信号滞后+踏空深V反弹) → 为人工决策参考, 非自动信号
+
+    # 切换参考: 全池当前 bull_align 排序 (人工换标时的候选输入)
+    print(f"\n{_hdr('切换参考 (全池当前强势排序, 人工换标候选)', icon='🔁')}")
+    cands = []
+    for code, (name, cat) in ETF_POOL.items():
+        s = load_qfq(code)
+        if s is None or len(s) < 300: continue
+        ma20 = s.rolling(20).mean()
+        ma60 = s.rolling(60).mean()
+        ma250 = s.rolling(250).mean()
+        ba = ((ma20 > ma60) & (ma60 > ma250)).astype(float).rolling(60).mean()
+        cb = ba.iloc[-1]
+        if np.isnan(cb): continue
+        cands.append((name, code, cb))
+    cands.sort(key=lambda x: -x[2])
+    cand_rows = []
+    for name, code, cb in cands[:6]:
+        mark = "⭐" if code in pool else ""
+        in_pool = "池内" if code in pool else "候选"
+        cand_rows.append([name, f"({code})", f"{cb:.2f}", in_pool, mark])
+    print(_tbl(
+        [("标的", 8), ("代码", 8), ("bull_align", 10), ("池内/候选", 8), ("", 2)],
+        cand_rows,
+        aligns=['l', 'l', 'r', 'l', 'c'],
+    ))
+    print(f"   注: 机械换标已验证无效(43%≈随机), 此列表仅供人工年度审视时参考;")
+    print(f"       换标需综合判断(强势期+主题逻辑), 不因单日信号机械执行")
 
     # ============ 今日推荐汇总 ============
     print(f"\n{_hdr('今日推荐汇总 (V0策略)', icon='📌')}")
