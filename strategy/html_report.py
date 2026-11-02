@@ -49,11 +49,12 @@ def _pos_chip(cell):
 
 
 def _chg_span(cell):
-    """涨跌列: A股习惯 红涨绿跌; emoji 换成 ▲▼ 避免无字体环境变方块"""
+    """涨跌列: 按正负号判定方向 (箭头只做装饰), A股习惯 红涨绿跌"""
     txt = cell.replace("📈", "▲").replace("📉", "▼")
-    if cell.startswith("📈"):
+    core = txt.lstrip("▲▼").strip()
+    if core.startswith("+"):
         return f'<span class="up">{_esc(txt)}</span>'
-    if cell.startswith("📉"):
+    if core.startswith("-"):
         return f'<span class="down">{_esc(txt)}</span>'
     return _esc(txt)
 
@@ -119,8 +120,16 @@ def _render_table(header_cells, rows):
             tds.append(f'<td class="{cls}">{_styled_cell(header_cells[i], cell)}</td>')
         body.append(f'<tr class="{"pool" if is_pool else ""}">' + "".join(tds) + "</tr>")
     wide = ' class="wide"' if len(hdr) >= 10 else ''
-    return (f'<div class="tw"><table{wide}><thead><tr>{th}</tr></thead>'
-            f'<tbody>{"".join(body)}</tbody></table></div>')
+    head = f'<table{wide}><thead><tr>{th}</tr></thead><tbody>' + "".join(body) + '</tbody></table>'
+    if len(rows) <= 20:
+        return f'<div class="tw">{head}</div>'
+    # 长表默认折叠: 前 8 行常驻, 其余收进 details
+    vis = "".join(body[:8])
+    hid = "".join(body[8:])
+    inner_head = f'<table{wide}><thead><tr>{th}</tr></thead><tbody>'
+    return (f'<div class="tw">{inner_head}{vis}</tbody></table>'
+            f'<details class="more"><summary>展开其余 {len(rows) - 8} 行</summary>'
+            f'<table{wide}><thead><tr>{th}</tr></thead><tbody>{hid}</tbody></table></details></div>')
 
 
 def _is_header_line(stripped):
@@ -257,7 +266,9 @@ tbody tr:hover { background:#232c44; }
 .notes { font-size:12.5px; color:var(--muted); background:var(--bg2);
          border-left:3px solid #3b4a6b; padding:8px 12px; border-radius:0 8px 8px 0;
          margin:8px 0; line-height:1.75; }
+.notes > div { white-space:pre-wrap; }
 .notes > div + div { margin-top:4px; }
+.num, .sec-col { white-space:nowrap; }
 td.num, th.num { text-align:right; font-family:Consolas,monospace; }
 tr.pool td { background:rgba(94,170,255,.055); }
 tr.pool td:first-child { font-weight:700; }
@@ -278,6 +289,13 @@ pre { font-size:12.5px; color:#b8c3da; background:var(--bg2); border:1px solid #
 .action .pill.hot { background:rgba(255,107,107,.13); color:#ff9a9a; border-color:rgba(255,107,107,.4); font-weight:700; }
 .action .act-rot { font-size:12.5px; color:#c3cee4; width:100%; padding-top:4px;
                    border-top:1px solid #2a3550; }
+.action .pill em { font-style:normal; opacity:.72; font-size:11.5px; }
+details.more { margin-top:8px; }
+details.more summary { cursor:pointer; font-size:12.5px; color:#82bcff; padding:6px 2px;
+                       list-style:none; user-select:none; }
+details.more summary::-webkit-details-marker { display:none; }
+details.more summary::before { content:'▸ '; }
+details.more[open] summary::before { content:'▾ '; }
 .foot { text-align:center; color:var(--muted); font-size:12px; margin-top:24px; letter-spacing:.5px; }
 @media (max-width: 820px) {
   .wrap { padding:16px 12px 40px; max-width:100%; overflow-x:hidden; }
@@ -357,14 +375,16 @@ def render_html(text, date_str, extra_meta=""):
         chips.append(f'<div class="act-main"><span class="k">今日合计投入</span>'
                      f'<span class="v">{total}</span><span class="u">元</span></div>')
     sub = []
-    if ai_amt:
-        sub.append(f'<span class="pill hot">AI {ai_amt}元</span>')
-    if gold_amt:
-        sub.append(f'<span class="pill">黄金 {gold_amt}元</span>')
     if cyc:
-        sub.append(f'<span class="pill">周期 {cyc}元</span>')
+        inner = []
+        if ai_amt:
+            inner.append(f"AI {ai_amt}元")
+        if gold_amt:
+            inner.append(f"黄金 {gold_amt}元")
+        detail = f'<em>{" · ".join(inner)}</em>' if inner else ""
+        sub.append(f'<span class="pill hot">周期卫星 {cyc}元 {detail}</span>')
     if basic:
-        sub.append(f'<span class="pill">基本 {basic}元</span>')
+        sub.append(f'<span class="pill">基本配置 {basic}元 <em>三只各等额</em></span>')
     if sub:
         chips.append('<div class="act-sub">' + "".join(sub) + '</div>')
     if rot:
@@ -378,7 +398,7 @@ def render_html(text, date_str, extra_meta=""):
             # 无标题 section (如"当前定投池"行) → 并入 hero 下方提示条
             for it in items:
                 txt = it[1] if it[0] == "note" else it[1]
-                out.append(f'<div class="note">{_esc(txt)}</div>')
+                out.append(f'<div class="notes"><div>{_esc(txt)}</div></div>')
             continue
         # 跳过与 hero 重复的首个日报标题 section
         if title.startswith("ETF 定投策略日报"):
