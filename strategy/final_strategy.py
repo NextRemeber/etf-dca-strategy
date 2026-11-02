@@ -784,4 +784,52 @@ def main():
         pass
 
 if __name__ == "__main__":
-    main()
+    import io
+    from contextlib import redirect_stdout
+    from datetime import datetime as _dt
+
+    # 捕获全部输出 → 生成 HTML 报告文件 (v3.5.2: 日报改为文件交付, 不再贴全文)
+    _buf = io.StringIO()
+    with redirect_stdout(_buf):
+        main()
+    _text = _buf.getvalue()
+
+    # 报告目录: 生产脚本同级 reports/ 下, 按日期+时间戳命名
+    _report_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
+    os.makedirs(_report_dir, exist_ok=True)
+    _ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+    _html_path = os.path.join(_report_dir, f"daily_report_{_ts}.html")
+
+    # HTML 报告: 标题 + 等宽 pre 保留原排版 + 中文字体 + 深色主题
+    _html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ETF 定投策略日报 | {_dt.now().strftime('%Y-%m-%d')}</title>
+<style>
+  body {{ font-family: "Microsoft YaHei", "PingFang SC", monospace; background: #1e1e1e; color: #d4d4d4; padding: 24px; line-height: 1.5; }}
+  h1 {{ color: #4fc3f7; font-size: 20px; margin-bottom: 16px; }}
+  pre {{ white-space: pre-wrap; word-wrap: break-word; font-size: 13px; }}
+</style>
+</head>
+<body>
+<h1>📊 ETF 定投策略日报 | {_dt.now().strftime('%Y-%m-%d')}</h1>
+<pre>{_text}</pre>
+</body>
+</html>"""
+    with open(_html_path, "w", encoding="utf-8") as f:
+        f.write(_html)
+
+    # 简短摘要输出到会话 (不再贴全文)
+    print(f"📊 ETF 定投策略日报 | {_dt.now().strftime('%Y-%m-%d')}")
+    print(f"   HTML 报告已生成: {_html_path}")
+    # 提取关键金额做摘要 (AI/黄金/基本配置合计)
+    try:
+        import re
+        _ai = re.search(r"AI.*?\(159819\).*?(\d+)元", _text)
+        _gold = re.search(r"黄金.*?\(518880\).*?(\d+)元", _text)
+        _total = re.search(r"合计\s+5 标的\s+(\d+)元", _text)
+        print(f"   摘要: AI {_ai.group(1) if _ai else '?'}元 | 黄金 {_gold.group(1) if _gold else '?'}元 | 合计 {_total.group(1) if _total else '?'}元")
+    except Exception:
+        pass
