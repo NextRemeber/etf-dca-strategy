@@ -619,9 +619,6 @@ def main():
 
     # ============ 基本配置类资产 (纯定投, 已验证调节无效) ============
     print(f"\n{_hdr(f'基本配置资产 (纳指/红利低波/豆粕, 占预算60%={basic_budget:.0f}元/月) | 纯定投', icon='🏦')}")
-    print(f"   策略: 每月等额定投, 不做BOLL调节 (豆粕=商品保险, 低相关0.104, 不参与轮动)")
-    print(f"   验证: BOLL中轨调节对慢牛资产无超额收益, 纯定投最优; 豆粕加入三窗口 Calmar 全面提升\n")
-
     # A1 (定投即轮动, v3.5): 基本块有轮动信号时, loser 不投新钱, 新钱全给 winner
     # 效果: loser 只卖不买, winner 得到全部新钱+卖出资金, 避免"买了又卖"
     # 回测: 与先投后调结果几乎一致(略好), Calmar 2.56→2.59, 各窗口全胜 (阶段二十一)
@@ -633,6 +630,15 @@ def main():
         if abs(_valid[_c1] - _valid[_c2]) >= 5:
             basic_rot_loser = _c1 if _valid[_c1] < _valid[_c2] else _c2
             basic_rot_winner = _c2 if basic_rot_loser == _c1 else _c1
+
+    # 执行口径提示 (A1 触发时置顶显示, 让用户一眼看到本月执行方式)
+    if basic_rot_loser:
+        _n1 = SLOW_POOL.get(basic_rot_loser, basic_rot_loser)
+        _n2 = SLOW_POOL.get(basic_rot_winner, basic_rot_winner)
+        print(f"   ⚡ 本月执行 A1定投即轮动: {_n1}不投新钱(只调出) → {_n2}承接双倍预算 | 周期块: 先投后调")
+    else:
+        print(f"   本月执行: 基本块无轮动(分差<5) → 等额定投 | 周期块: 先投后调")
+    print()
 
     slow_total = 0
     slow_rows = []
@@ -660,11 +666,14 @@ def main():
         if basic_rot_loser and code == basic_rot_loser:
             amt = 0.0
             level = "🔻 调出(不投新钱)"
+            amt_disp = "  0元"
         elif basic_rot_winner and code == basic_rot_winner:
             amt = per * 2
             level = "🟢 正常定投(含loser新钱)"
+            amt_disp = f"{amt:.0f}元*"
         else:
             amt = per
+            amt_disp = f"{amt:.0f}元"
         slow_total += amt
         chg_str = ""
         if HAS_ENHANCED:
@@ -677,7 +686,7 @@ def main():
             except Exception:
                 pass
         slow_rows.append([name, f"({code})", f"{price:.3f}", chg_str,
-                          f"{mult:.1f}x", f"{amt:.0f}元", level, prem_str])
+                          f"{mult:.1f}x", amt_disp, level, prem_str])
 
     print(_tbl(
         [("标的", 7), ("代码", 8), ("现价", 7), ("涨跌", 8), ("倍数", 4), ("金额", 6), ("状态", 22), ("溢价", 6)],
@@ -685,6 +694,8 @@ def main():
         aligns=['l', 'l', 'r', 'l', 'r', 'r', 'l', 'r'],
     ))
     print(f"   规则: 基本块A1定投即轮动 (loser不投新钱, winner承接其预算) | 周期块先投后调 | 溢价仅展示不触发动作")
+    if basic_rot_loser:
+        print(f"   注: * = winner 承接 loser 的新钱预算 (A1 模式)")
 
     # ============ 分数轮动指令 (再平衡纪律, 非择时) ============
     # 验证: 分差>=5触发, 基本配置30%/周期卫星25%, 全窗Calmar 2.56→2.63 (2026-10-24)
